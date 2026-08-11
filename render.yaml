@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: student-analytics-copilot
+    runtime: docker
+    plan: free
+    autoDeployTrigger: checksPass
+    healthCheckPath: /api/health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: openai/gpt-oss-20b
+      - key: APP_SECRET
+        generateValue: true
+      - key: ENVIRONMENT
+        value: production

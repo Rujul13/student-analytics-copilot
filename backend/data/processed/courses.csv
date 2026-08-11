@@ -1,0 +1,13 @@
+course_code,course_name,department,level,credits,offered_next_term,prerequisites,programs,requirement_type,catalog_source
+AAA,OULAD Module AAA,Foundations,1,30,False,,Data & Society;Applied Computing;Business Analytics,historical,OULAD-derived
+BBB,OULAD Module BBB,Business,1,30,False,,Business Analytics,historical,OULAD-derived
+CCC,OULAD Module CCC,Computing,1,30,False,,Applied Computing,historical,OULAD-derived
+DDD,OULAD Module DDD,Systems,2,30,False,CCC,Applied Computing,historical,OULAD-derived
+EEE,OULAD Module EEE,Quantitative Studies,2,30,False,,Data & Society;Business Analytics,historical,OULAD-derived
+FFF,OULAD Module FFF,Research,2,30,False,,Data & Society;Applied Computing;Business Analytics,historical,OULAD-derived
+GGG,OULAD Module GGG,Capstone,3,30,False,FFF,Data & Society;Applied Computing;Business Analytics,historical,OULAD-derived
+NXT101,Academic Momentum Lab,Student Success,1,15,True,,Data & Society;Applied Computing;Business Analytics,elective,Fictional demo enrichment
+NXT210,Data Analysis Studio,Quantitative Studies,2,30,True,EEE,Data & Society;Business Analytics,core,Fictional demo enrichment
+NXT220,Applied Software Studio,Computing,2,30,True,CCC,Applied Computing,core,Fictional demo enrichment
+NXT230,Evidence-Based Strategy,Business,2,30,True,BBB,Business Analytics,core,Fictional demo enrichment
+NXT390,Interdisciplinary Analytics Capstone,Interdisciplinary,3,30,True,FFF,Data & Society;Applied Computing;Business Analytics,core,Fictional demo enrichment

@@ -1,0 +1,2 @@
+"""Student Analytics Copilot backend."""
+

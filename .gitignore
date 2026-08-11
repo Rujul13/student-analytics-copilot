@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+node_modules/
+dist/
+*.tsbuildinfo
+work/
+outputs/
+.DS_Store
+backend/data/raw/*
+!backend/data/raw/.gitkeep
+backend/data/oulad/*
+!backend/data/oulad/.gitkeep

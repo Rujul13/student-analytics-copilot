@@ -1,0 +1,28 @@
+from fastapi.testclient import TestClient
+
+from app.config import get_settings
+from app.main import app
+
+
+def test_public_api_vertical_slice(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    get_settings.cache_clear()
+    with TestClient(app) as client:
+        health = client.get("/api/health")
+        assert health.status_code == 200
+        assert health.json()["status"] == "ok"
+
+        dashboard = client.get("/api/dashboard")
+        assert dashboard.status_code == 200
+        assert dashboard.json()["dataset_name"] == "OULAD Lite"
+        assert dashboard.json()["metrics"][0]["value"] == 750
+
+        student = client.get("/api/students").json()[0]
+        recommendations = client.get(f"/api/students/{student['student_id']}/recommendations")
+        assert recommendations.status_code == 200
+        assert recommendations.json()["capability_mode"] == "graduation-aware"
+        assert recommendations.json()["catalog_label"] == "Fictional demo catalog enrichment"
+
+        query = client.post("/api/query", json={"question": "What is the average grade?"})
+        assert query.status_code == 200
+        assert query.json()["result_type"] == "metric"
