@@ -7,8 +7,10 @@ EEE,OULAD Module EEE,Quantitative Studies,2,30,false,,Data & Society;Business An
 FFF,OULAD Module FFF,Research,2,30,false,,Data & Society;Applied Computing;Business Analytics,historical,OULAD-derived
 GGG,OULAD Module GGG,Capstone,3,30,false,FFF,Data & Society;Applied Computing;Business Analytics,historical,OULAD-derived
 NXT101,Academic Momentum Lab,Student Success,1,15,true,,Data & Society;Applied Computing;Business Analytics,elective,Fictional demo enrichment
+NXT120,Community Data Foundations,Social Analytics,1,30,true,,Data & Society,core,Fictional demo enrichment
+NXT130,Computing Foundations Studio,Computing,1,30,true,,Applied Computing,core,Fictional demo enrichment
+NXT140,Business Analytics Foundations,Business,1,30,true,,Business Analytics,core,Fictional demo enrichment
 NXT210,Data Analysis Studio,Quantitative Studies,2,30,true,EEE,Data & Society;Business Analytics,core,Fictional demo enrichment
 NXT220,Applied Software Studio,Computing,2,30,true,CCC,Applied Computing,core,Fictional demo enrichment
 NXT230,Evidence-Based Strategy,Business,2,30,true,BBB,Business Analytics,core,Fictional demo enrichment
 NXT390,Interdisciplinary Analytics Capstone,Interdisciplinary,3,30,true,FFF,Data & Society;Applied Computing;Business Analytics,core,Fictional demo enrichment
-

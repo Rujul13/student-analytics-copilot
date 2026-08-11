@@ -33,6 +33,8 @@ class StudentSummary(BaseModel):
     program: str
     average_grade: float
     credits_earned: int
+    graded_enrollments: int
+    withdrawals: int
     risk: Literal["Low", "Medium", "High"]
     status: str
 

@@ -30,16 +30,30 @@ def _completed_and_current(context: DatasetContext, student_id: str) -> tuple[se
     return completed, current
 
 
-def _score(student_average: float, credits_earned: int, level: int, requirement_type: str, in_program: bool) -> tuple[int, int, int, int]:
+def _score(
+    student_average: float,
+    credits_earned: int,
+    graded_enrollments: int,
+    withdrawals: int,
+    level: int,
+    requirement_type: str,
+    in_program: bool,
+    department: str,
+) -> tuple[int, int, int, int]:
     if in_program and requirement_type == "core":
         requirement_fit = 100
     elif in_program and requirement_type == "elective":
-        requirement_fit = 82
+        requirement_fit = 76
     else:
         requirement_fit = 42
 
-    target_grade = 58 + level * 5
-    performance_fit = max(35, min(100, round(100 - abs(student_average - target_grade) * 1.35)))
+    if graded_enrollments == 0:
+        performance_fit = 70 if department != "Student Success" else 78
+    elif department == "Student Success":
+        performance_fit = min(100, 62 + withdrawals * 12 + max(0, round((55 - student_average) * 0.8)))
+    else:
+        target_grade = 58 + level * 5
+        performance_fit = max(55, min(100, round(100 - abs(student_average - target_grade) * 1.35)))
     expected_level = max(1, min(3, credits_earned // 60 + 1))
     progression_fit = max(35, 100 - abs(level - expected_level) * 28)
     total = round(requirement_fit * 0.45 + performance_fit * 0.30 + progression_fit * 0.25)
@@ -70,9 +84,12 @@ def recommend(context: DatasetContext, student_id: str) -> RecommendationRespons
         score, requirement_fit, performance_fit, progression_fit = _score(
             student.average_grade,
             student.credits_earned,
+            student.graded_enrollments,
+            student.withdrawals,
             int(row.level),
             row.requirement_type,
             in_program,
+            row.department,
         )
         requirement_reason = (
             f"Counts as a {row.requirement_type} option for the {student.program} demo pathway"
@@ -84,6 +101,11 @@ def recommend(context: DatasetContext, student_id: str) -> RecommendationRespons
             if prerequisites
             else "No prerequisite course is required"
         )
+        evidence_reason = (
+            f"Performance fit uses {student.graded_enrollments} graded module record(s) and the recorded {student.average_grade:.1f}% average"
+            if student.graded_enrollments
+            else "No graded assessment is recorded, so performance fit is neutral rather than treating missing evidence as a 0% grade"
+        )
         candidates.append(
             Recommendation(
                 course_code=row.course_code,
@@ -94,7 +116,7 @@ def recommend(context: DatasetContext, student_id: str) -> RecommendationRespons
                     requirement_reason,
                     prerequisite_reason,
                     f"Level {row.level} fit is based on {student.credits_earned} earned credits",
-                    f"Performance fit uses the recorded {student.average_grade:.1f}% average",
+                    evidence_reason,
                 ],
                 requirement_fit=requirement_fit,
                 performance_fit=performance_fit,
@@ -123,6 +145,8 @@ async def add_ai_explanations(response: RecommendationResponse, api_key: str | N
             "program": response.student.program,
             "average_grade": response.student.average_grade,
             "credits_earned": response.student.credits_earned,
+            "graded_enrollments": response.student.graded_enrollments,
+            "withdrawals": response.student.withdrawals,
         },
         "recommendations": [
             {

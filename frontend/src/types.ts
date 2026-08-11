@@ -64,6 +64,8 @@ export interface Student {
   program: string;
   average_grade: number;
   credits_earned: number;
+  graded_enrollments: number;
+  withdrawals: number;
   risk: "Low" | "Medium" | "High";
   status: string;
 }

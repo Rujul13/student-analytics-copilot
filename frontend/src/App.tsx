@@ -153,9 +153,42 @@ function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
 
 function Recommendations({ students }: { students: Student[] }) {
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<Student | null>(students[0] ?? null);
+  const featured = useMemo(() => {
+    const programs = Array.from(new Set(students.map((student) => student.program)));
+    const riskSequence: Student["risk"][] = ["High", "Medium", "Low", "Medium"];
+    const chosen: Student[] = [];
+    const chosenIds = new Set<string>();
+    for (let index = 0; index < 12 && programs.length; index += 1) {
+      const risk = riskSequence[index % riskSequence.length];
+      const program = programs[index % programs.length];
+      const candidate = students.find((student) =>
+        student.risk === risk
+        && student.program === program
+        && student.graded_enrollments > 0
+        && !chosenIds.has(student.student_id));
+      if (candidate) {
+        chosen.push(candidate);
+        chosenIds.add(candidate.student_id);
+      }
+    }
+    for (const student of students) {
+      if (chosen.length >= 12) break;
+      if (student.graded_enrollments > 0 && !chosenIds.has(student.student_id)) {
+        chosen.push(student);
+        chosenIds.add(student.student_id);
+      }
+    }
+    return chosen;
+  }, [students]);
+  const [selected, setSelected] = useState<Student | null>(featured[0] ?? students[0] ?? null);
   const [result, setResult] = useState<RecommendationResponse | null>(null);
-  const filtered = useMemo(() => students.filter((student) => `${student.display_name} ${student.student_id}`.toLowerCase().includes(search.toLowerCase())).slice(0, 12), [students, search]);
+  const filtered = useMemo(() => search.trim()
+    ? students.filter((student) => `${student.display_name} ${student.student_id}`.toLowerCase().includes(search.toLowerCase())).slice(0, 12)
+    : featured, [featured, students, search]);
+
+  useEffect(() => {
+    if (!selected && featured[0]) setSelected(featured[0]);
+  }, [featured, selected]);
 
   useEffect(() => {
     if (!selected) return;
@@ -172,15 +205,15 @@ function Recommendations({ students }: { students: Student[] }) {
         <div className="student-items">
           {filtered.map((student) => <button className={selected?.student_id === student.student_id ? "selected" : ""} onClick={() => setSelected(student)} key={student.student_id}>
             <span className="avatar">{student.display_name.split(" ").at(-1)?.slice(-2)}</span>
-            <span><strong>{student.display_name}</strong><small>{student.student_id} · {student.average_grade}%</small></span>
+            <span><strong>{student.display_name}</strong><small>{student.student_id} · {student.graded_enrollments ? `${student.average_grade}%` : "No recorded grade"}</small></span>
             <i className={`risk ${student.risk.toLowerCase()}`}>{student.risk}</i>
           </button>)}
         </div>
       </aside>
       <div className="recommendation-space">
         {selected && <div className="student-banner">
-          <div><p className="eyebrow">Selected learner</p><h2>{selected.display_name}</h2><span>{selected.program} · {selected.credits_earned} credits earned</span></div>
-          <div className="grade-ring"><strong>{selected.average_grade}</strong><small>avg.</small></div>
+          <div><p className="eyebrow">Selected learner</p><h2>{selected.display_name}</h2><span>{selected.program} · {selected.credits_earned} credits earned · {selected.graded_enrollments} graded module{selected.graded_enrollments === 1 ? "" : "s"}</span></div>
+          <div className="grade-ring"><strong>{selected.graded_enrollments ? selected.average_grade : "—"}</strong><small>{selected.graded_enrollments ? "avg." : "no grade"}</small></div>
         </div>}
         {!result && <Loading />}
         {result && <>

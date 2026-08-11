@@ -28,4 +28,4 @@ def test_deployment_can_load_packaged_canonical_cohort():
     manifest = json.loads((SOURCE.parent / "processed" / "manifest.json").read_text(encoding="utf-8"))
     assert context.version == manifest["dataset_version"]
     assert len(context.frames["students"]) == 750
-    assert len(context.frames["courses"]) == 12
+    assert len(context.frames["courses"]) == 15

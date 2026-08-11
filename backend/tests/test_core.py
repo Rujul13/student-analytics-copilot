@@ -1,10 +1,12 @@
+import pandas as pd
+
 from app.analytics import dashboard, students
 from app.ai_workflow import AnalyticsPlan, execute_plan
 from app.catalog import split_codes
 from app.config import Settings
 from app.copilot import answer_question
 from app.recommendations import recommend
-from app.repository import load_dataset
+from app.repository import DatasetContext, load_dataset
 
 
 def context():
@@ -22,6 +24,29 @@ def test_students_are_prioritized_by_risk():
     result = students(context())
     assert len(result) == 180
     assert result[0].risk == "High"
+    assert result[0].graded_enrollments > 0
+
+
+def test_prerequisite_free_recommendations_vary_by_demo_pathway():
+    dataset = context()
+    frames = {name: frame.copy() for name, frame in dataset.frames.items()}
+    pathway_students = pd.DataFrame([
+        {"student_id": "PATH-DS", "display_name": "Data Path", "program": "Data & Society", "program_source": "Test"},
+        {"student_id": "PATH-AC", "display_name": "Computing Path", "program": "Applied Computing", "program_source": "Test"},
+        {"student_id": "PATH-BA", "display_name": "Business Path", "program": "Business Analytics", "program_source": "Test"},
+    ])
+    frames["students"] = pd.concat([frames["students"], pathway_students], ignore_index=True)
+    augmented = DatasetContext(dataset.name, dataset.version, dataset.mode, frames)
+
+    expected = {
+        "PATH-DS": "NXT120",
+        "PATH-AC": "NXT130",
+        "PATH-BA": "NXT140",
+    }
+    for student_id, course_code in expected.items():
+        response = recommend(augmented, student_id)
+        assert response.recommendations[0].course_code == course_code
+        assert "neutral rather than treating missing evidence as a 0% grade" in response.recommendations[0].reasons[-1]
 
 
 def test_recommendations_exclude_completed_courses():

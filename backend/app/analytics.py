@@ -54,9 +54,12 @@ def students(context: DatasetContext) -> list[StudentSummary]:
     rollup = joined.groupby("student_id").agg(
         average_grade=("weighted_grade", "mean"),
         credits_earned=("credits", "sum"),
+        graded_enrollments=("weighted_grade", "count"),
         withdrawals=("final_result", lambda values: int((values == "Withdrawn").sum())),
     ).reset_index()
-    merged = context.frames["students"].merge(rollup, on="student_id", how="left").fillna(0)
+    merged = context.frames["students"].merge(rollup, on="student_id", how="left")
+    for column in ["average_grade", "credits_earned", "graded_enrollments", "withdrawals"]:
+        merged[column] = merged[column].fillna(0)
     result = []
     for row in merged.itertuples():
         result.append(StudentSummary(
@@ -65,8 +68,18 @@ def students(context: DatasetContext) -> list[StudentSummary]:
             program=row.program,
             average_grade=round(float(row.average_grade), 1),
             credits_earned=int(row.credits_earned),
+            graded_enrollments=int(row.graded_enrollments),
+            withdrawals=int(row.withdrawals),
             risk=risk_label(float(row.average_grade), int(row.withdrawals)),
-            status="Active",
+            status="Graded evidence available" if int(row.graded_enrollments) else "No graded assessment",
         ))
-    return sorted(result, key=lambda student: (student.risk != "High", student.average_grade))
-
+    risk_order = {"High": 0, "Medium": 1, "Low": 2}
+    return sorted(
+        result,
+        key=lambda student: (
+            risk_order[student.risk],
+            student.graded_enrollments == 0,
+            student.average_grade,
+            student.student_id,
+        ),
+    )
