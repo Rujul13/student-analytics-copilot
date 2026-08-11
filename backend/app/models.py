@@ -25,6 +25,13 @@ class DashboardResponse(BaseModel):
     outcomes: list[DistributionPoint]
     modules: list[DistributionPoint]
     risk_bands: list[DistributionPoint]
+    filter_options: "DashboardFilterOptions"
+
+
+class DashboardFilterOptions(BaseModel):
+    courses: list[str]
+    presentations: list[str]
+    outcomes: list[str]
 
 
 class StudentSummary(BaseModel):
@@ -51,6 +58,17 @@ class Recommendation(BaseModel):
     requirement_type: str
     prerequisites_met: list[str]
     narrative: str | None = None
+    predicted_success_probability: float | None = Field(default=None, ge=0, le=100)
+
+
+class SuccessModelSummary(BaseModel):
+    model_name: str
+    training_records: int
+    test_records: int
+    accuracy: float
+    brier_score: float
+    roc_auc: float
+    dataset_version: str
 
 
 class RecommendationResponse(BaseModel):
@@ -59,10 +77,18 @@ class RecommendationResponse(BaseModel):
     recommendations: list[Recommendation]
     ai_explanation_enabled: bool
     catalog_label: str
+    ranking_mode: Literal["deterministic", "hybrid-llm"] = "deterministic"
+    success_model: SuccessModelSummary | None = None
+
+
+class ConversationTurn(BaseModel):
+    question: str = Field(min_length=3, max_length=500)
+    answer: str = Field(min_length=1, max_length=1500)
 
 
 class QueryRequest(BaseModel):
     question: str = Field(min_length=3, max_length=500)
+    history: list[ConversationTurn] = Field(default_factory=list, max_length=6)
 
 
 class ImportCommitRequest(BaseModel):

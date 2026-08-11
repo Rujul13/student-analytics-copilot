@@ -21,7 +21,7 @@ import {
   Users,
 } from "lucide-react";
 import { api } from "./api";
-import type { DashboardData, DatasetInfo, ImportPreview, QueryResponse, RecommendationResponse, Student } from "./types";
+import type { DashboardData, DashboardFilters, DatasetInfo, ImportMappingSuggestion, ImportPreview, QueryResponse, RecommendationResponse, Student } from "./types";
 
 type View = "overview" | "copilot" | "recommendations" | "import";
 
@@ -36,22 +36,35 @@ function Loading() {
   return <div className="loading"><span /><span /><span /></div>;
 }
 
-function BarList({ points, suffix = "%" }: { points: DashboardData["outcomes"]; suffix?: string }) {
+function BarList({ points, suffix = "%", onSelect }: { points: DashboardData["outcomes"]; suffix?: string; onSelect?: (label: string) => void }) {
   const max = Math.max(...points.map((point) => point.value), 1);
   return (
     <div className="bar-list">
       {points.map((point) => (
-        <div className="bar-row" key={point.label}>
+        <button className={`bar-row ${onSelect ? "selectable" : ""}`} key={point.label} onClick={() => onSelect?.(point.label)} disabled={!onSelect}>
           <div className="bar-meta"><span>{point.label}</span><strong>{point.value}{suffix}</strong></div>
           <div className="bar-track"><span style={{ width: `${(point.value / max) * 100}%` }} /></div>
           <small>{point.count} records</small>
-        </div>
+        </button>
       ))}
     </div>
   );
 }
 
-function Overview({ data, dataset, onNavigate }: { data: DashboardData; dataset: DatasetInfo | null; onNavigate: (view: View) => void }) {
+function DonutChart({ points, onSelect }: { points: DashboardData["outcomes"]; onSelect: (label: string) => void }) {
+  const colors = ["#3758f9", "#22c7a9", "#ffb75e", "#ef6f8f", "#8b6cf6"];
+  let cursor = 0;
+  const segments = points.map((point, index) => {
+    const start = cursor; cursor += point.value;
+    return `${colors[index % colors.length]} ${start}% ${cursor}%`;
+  });
+  return <div className="donut-layout">
+    <div className="donut" style={{ background: `conic-gradient(${segments.join(", ")})` }}><span><strong>{points.reduce((sum, point) => sum + point.count, 0)}</strong><small>records</small></span></div>
+    <div className="donut-legend">{points.map((point, index) => <button onClick={() => onSelect(point.label)} key={point.label}><i style={{ background: colors[index % colors.length] }} /><span>{point.label}<small>{point.value}%</small></span></button>)}</div>
+  </div>;
+}
+
+function Overview({ data, dataset, filters, onFilter, onNavigate }: { data: DashboardData; dataset: DatasetInfo | null; filters: DashboardFilters; onFilter: (filters: DashboardFilters) => void; onNavigate: (view: View) => void }) {
   const icons = [Users, Gauge, TrendingUp, CircleAlert];
   const highRiskCount = data.risk_bands.find((point) => point.label === "High")?.count ?? 0;
   return (
@@ -79,6 +92,13 @@ function Overview({ data, dataset, onNavigate }: { data: DashboardData; dataset:
         })}
       </section>
 
+      <section className="dashboard-filters" aria-label="Dashboard filters">
+        <div><label htmlFor="course-filter">Module</label><select id="course-filter" value={filters.course_code ?? ""} onChange={(event) => onFilter({ ...filters, course_code: event.target.value || undefined })}><option value="">All modules</option>{data.filter_options.courses.map((item) => <option key={item}>{item}</option>)}</select></div>
+        <div><label htmlFor="presentation-filter">Presentation</label><select id="presentation-filter" value={filters.presentation ?? ""} onChange={(event) => onFilter({ ...filters, presentation: event.target.value || undefined })}><option value="">All presentations</option>{data.filter_options.presentations.map((item) => <option key={item}>{item}</option>)}</select></div>
+        <div><label htmlFor="outcome-filter">Outcome</label><select id="outcome-filter" value={filters.final_result ?? ""} onChange={(event) => onFilter({ ...filters, final_result: event.target.value || undefined })}><option value="">All outcomes</option>{data.filter_options.outcomes.map((item) => <option key={item}>{item}</option>)}</select></div>
+        {Object.values(filters).some(Boolean) && <button onClick={() => onFilter({})}><RotateCcw size={14} /> Clear filters</button>}
+      </section>
+
       {dataset && <section className="provenance-strip" aria-label="Dataset provenance">
         <div><Database size={19} /><span><small>Verified source</small><strong>{dataset.source}</strong></span></div>
         <div><span><small>Canonical cohort</small><strong>{dataset.tables.students.toLocaleString()} learners · {dataset.tables.enrollments.toLocaleString()} histories</strong></span></div>
@@ -88,11 +108,11 @@ function Overview({ data, dataset, onNavigate }: { data: DashboardData; dataset:
       <section className="content-grid">
         <article className="panel wide">
           <div className="panel-heading"><div><p className="eyebrow">Academic performance</p><h2>Module pulse</h2></div><span className="tag">Average grade</span></div>
-          <BarList points={data.modules} />
+          <BarList points={data.modules} onSelect={(course_code) => onFilter({ ...filters, course_code })} />
         </article>
         <article className="panel">
-          <div className="panel-heading"><div><p className="eyebrow">Learner outcomes</p><h2>Result mix</h2></div></div>
-          <BarList points={data.outcomes} />
+          <div className="panel-heading"><div><p className="eyebrow">Learner outcomes</p><h2>Result mix</h2></div><span className="tag">Click to filter</span></div>
+          <DonutChart points={data.outcomes} onSelect={(final_result) => onFilter({ ...filters, final_result })} />
         </article>
         <article className="panel dark-panel">
           <p className="eyebrow">Priority signal</p>
@@ -106,17 +126,37 @@ function Overview({ data, dataset, onNavigate }: { data: DashboardData; dataset:
 }
 
 function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
-  const suggestions = ["What is the completion rate?", "Show me at-risk learners", "What is the average grade?"];
+  const suggestions = [
+    "How many learners earned a distinction?",
+    "Which modules have the lowest average grades?",
+    "Which students failed more than one class?",
+  ];
   const [question, setQuestion] = useState("");
-  const [result, setResult] = useState<QueryResponse | null>(null);
+  const [messages, setMessages] = useState<{ id: number; question: string; result: QueryResponse }[]>([]);
   const [busy, setBusy] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
 
   async function submit(event?: FormEvent, preset?: string) {
     event?.preventDefault();
     const value = preset ?? question;
     if (!value.trim()) return;
-    setQuestion(value); setBusy(true);
-    try { setResult(await api.query(value)); } finally { setBusy(false); }
+    setQuestion(""); setBusy(true); setChatError(null);
+    try {
+      const history = messages.slice(-6).map((message) => ({ question: message.question, answer: message.result.answer }));
+      const result = await api.query(value, history);
+      setMessages((current) => [...current, { id: Date.now(), question: value, result }]);
+    } catch (caught) {
+      setChatError(caught instanceof Error ? caught.message : "The question could not be answered.");
+    } finally { setBusy(false); }
+  }
+
+  function rowTitle(row: Record<string, string | number>, index: number) {
+    return String(row.display_name ?? row.course_name ?? row.module ?? row.metric ?? row.student_id ?? row.course_code ?? `Result ${index + 1}`);
+  }
+
+  function rowEvidence(row: Record<string, string | number>) {
+    const hidden = new Set(["display_name", "course_name", "module", "metric"]);
+    return Object.entries(row).filter(([key]) => !hidden.has(key));
   }
 
   return <section className="copilot-layout">
@@ -127,21 +167,32 @@ function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
       <p>Every response is constrained to approved calculations and includes a trace you can audit.</p>
       <div className={`status-pill ${aiEnabled ? "online" : "offline"}`}><span />{aiEnabled ? "AI explanations enabled" : "Safe analytics mode · API key pending"}</div>
     </div>
-    <div className="conversation-card">
-      <div className="suggestions">
+    <div className="conversation-card" aria-label="Analytics conversation">
+      <div className="conversation-tools">
+        <div className="suggestions">
         {suggestions.map((item) => <button key={item} onClick={() => void submit(undefined, item)}>{item}</button>)}
+        </div>
+        {messages.length > 0 && <button className="clear-chat" onClick={() => setMessages([])}><RotateCcw size={14} /> New conversation</button>}
       </div>
-      <div className="answer-area" aria-live="polite">
-        {!result && !busy && <div className="empty-answer"><BarChart3 size={32} /><h2>Your answer will appear here</h2><p>Try one of the suggested questions or write your own.</p></div>}
+      <div className="conversation-stream" aria-live="polite">
+        {messages.length === 0 && !busy && <div className="empty-answer"><BarChart3 size={32} /><h2>Start a conversation with your data</h2><p>Ask about outcomes, distinctions, failed courses, learner profiles, risk, modules, or recommendations.</p></div>}
+        {messages.map((message) => <article className="chat-turn" key={message.id}>
+          <div className="user-message"><span>You</span><p>{message.question}</p></div>
+          <div className="assistant-message">
+            <div className="answer-label"><Sparkles size={16} /> Northstar</div>
+            <h2>{message.result.answer}</h2>
+            {message.result.rows.length > 0 && <div className="evidence-table">
+              <div className="evidence-heading"><strong>Verified evidence</strong><span>{message.result.rows.length} result{message.result.rows.length === 1 ? "" : "s"}</span></div>
+              {message.result.rows.map((row, index) => <div className="evidence-row" key={`${message.id}-${index}`}>
+                <strong>{rowTitle(row, index)}</strong>
+                <div>{rowEvidence(row).map(([key, value]) => <span key={key}><small>{key.replaceAll("_", " ")}</small>{String(value)}</span>)}</div>
+              </div>)}
+            </div>}
+            <details><summary>Calculation trace</summary><ol>{message.result.calculation_trace.map((step) => <li key={step}>{step}</li>)}</ol></details>
+          </div>
+        </article>)}
         {busy && <Loading />}
-        {result && !busy && <>
-          <div className="answer-label"><Sparkles size={16} /> Answer</div>
-          <h2>{result.answer}</h2>
-          {result.rows.length > 1 && <div className="mini-table">
-            {result.rows.slice(0, 6).map((row, index) => <div key={index}><strong>{String(row.display_name ?? row.metric ?? row.module ?? `Result ${index + 1}`)}</strong><span>{row.risk ? `${row.risk} risk` : row.average_grade !== undefined ? `${row.average_grade}%` : String(row.value ?? "")}</span></div>)}
-          </div>}
-          <details><summary>Calculation trace</summary><ol>{result.calculation_trace.map((step) => <li key={step}>{step}</li>)}</ol></details>
-        </>}
+        {chatError && <div className="error-banner"><CircleAlert size={18} />{chatError}</div>}
       </div>
       <form className="query-box" onSubmit={submit}>
         <input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about performance, completion, or risk…" aria-label="Ask the dataset" />
@@ -217,13 +268,15 @@ function Recommendations({ students }: { students: Student[] }) {
         </div>}
         {!result && <Loading />}
         {result && <>
-          <div className="mode-note"><Database size={16} /><span><strong>{result.capability_mode}</strong> recommendation mode · {result.catalog_label} · {result.ai_explanation_enabled ? "AI explanations on" : "deterministic explanations"}</span></div>
+          <div className="mode-note"><Database size={16} /><span><strong>{result.capability_mode}</strong> recommendation mode · {result.catalog_label} · {result.ranking_mode === "hybrid-llm" ? "LLM reranked verified candidates" : "deterministic ranking"}</span></div>
+          {result.success_model && <div className="model-evaluation"><TrendingUp size={16} /><span><strong>Evaluated success baseline</strong><small>{result.success_model.model_name} · held-out n={result.success_model.test_records} · accuracy {(result.success_model.accuracy * 100).toFixed(1)}% · ROC AUC {result.success_model.roc_auc.toFixed(3)} · Brier {result.success_model.brier_score.toFixed(3)}</small></span></div>}
           <div className="recommendation-grid">
             {result.recommendations.map((item, index) => <article className="recommendation-card" key={item.course_code}>
               <div className="course-rank">0{index + 1}</div>
               <div className="course-top"><span>{item.course_code}</span><div><strong>{item.score}</strong><small>/100</small></div></div>
               <h3>{item.course_name}</h3>
               <p>{item.narrative ?? item.reasons[0]}</p>
+              {item.predicted_success_probability !== null && <div className="success-estimate"><span>Evaluated success estimate</span><strong>{item.predicted_success_probability}%</strong><small>Baseline estimate, not a guarantee</small></div>}
               <div className="score-bars">
                 {[['Requirement', item.requirement_fit], ['Performance', item.performance_fit], ['Progression', item.progression_fit]].map(([label, score]) => <div key={label as string}><span>{label}</span><i><b style={{ width: `${score}%` }} /></i></div>)}
               </div>
@@ -239,14 +292,22 @@ function Recommendations({ students }: { students: Student[] }) {
 function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onActivated: () => Promise<void> }) {
   const [files, setFiles] = useState<File[]>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [mapping, setMapping] = useState<ImportMappingSuggestion | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activated, setActivated] = useState(false);
   const expected = ["students", "courses", "enrollments", "grades"];
 
+  async function analyzeMapping() {
+    setBusy(true); setError(null); setPreview(null); setActivated(false);
+    try { setMapping(await api.suggestImportMapping(files)); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "The file headers could not be analyzed."); }
+    finally { setBusy(false); }
+  }
+
   async function inspect() {
     setBusy(true); setError(null); setPreview(null); setActivated(false);
-    try { setPreview(await api.previewImport(files)); }
+    try { setPreview(await api.previewImport(files, mapping ?? undefined)); }
     catch (caught) { setError(caught instanceof Error ? caught.message : "The files could not be validated."); }
     finally { setBusy(false); }
   }
@@ -261,7 +322,7 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
 
   async function reset() {
     setBusy(true); setError(null);
-    try { await api.resetDataset(); await onActivated(); setFiles([]); setPreview(null); setActivated(false); }
+    try { await api.resetDataset(); await onActivated(); setFiles([]); setMapping(null); setPreview(null); setActivated(false); }
     catch (caught) { setError(caught instanceof Error ? caught.message : "The dataset could not be reset."); }
     finally { setBusy(false); }
   }
@@ -283,7 +344,7 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
       </aside>
       <div className="import-workspace panel">
         <label className="drop-zone">
-          <input type="file" accept=".csv,text/csv" multiple onChange={(event) => { setFiles(Array.from(event.target.files ?? []).slice(0, 4)); setPreview(null); setActivated(false); setError(null); }} />
+          <input type="file" accept=".csv,text/csv" multiple onChange={(event) => { setFiles(Array.from(event.target.files ?? []).slice(0, 4)); setMapping(null); setPreview(null); setActivated(false); setError(null); }} />
           <div className="upload-icon"><UploadCloud size={28} /></div>
           <h2>Choose four canonical CSV files</h2>
           <p>students, courses, enrollments, and grades · 5 MB per file</p>
@@ -298,6 +359,10 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
         </div>
         {error && <div className="error-banner"><CircleAlert size={19} />{error}</div>}
         {preview?.warnings.map((warning) => <div className="warning-banner" key={warning}><CircleAlert size={18} />{warning}</div>)}
+        {mapping && <div className="mapping-review">
+          <div className="mapping-head"><div><Sparkles size={17} /><span><strong>{mapping.ai_used ? "AI-assisted header mapping" : "Deterministic header mapping"}</strong><small>Only filenames and column headers were analyzed. Review before applying.</small></span></div><i>{mapping.safe_to_apply ? "Ready for confirmation" : "Missing required fields"}</i></div>
+          {mapping.mappings.map((file) => <div className="mapping-file" key={file.filename}><div><strong>{file.filename}</strong><span>{file.role}</span></div><p>{file.columns.map((column) => `${column.source} → ${column.target}`).join(" · ") || "No confident mappings"}</p>{file.missing.length > 0 && <small>Missing: {file.missing.join(", ")}</small>}</div>)}
+        </div>}
         {activated && <div className="success-banner"><FileCheck2 size={19} />Dataset activated for this browser session. Dashboard, Copilot, and recommendations now use version {preview?.dataset_version}.</div>}
         {preview && !activated && <div className="preview-table">
           <div className="preview-head"><strong>Validation report</strong><span>{preview.mode}</span></div>
@@ -305,7 +370,8 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
         </div>}
         <div className="import-actions">
           <p>{preview ? activated ? "This dataset is active only for the current browser session." : "Preview is valid for 10 minutes. Your active dataset has not changed yet." : <>Uploads remain in memory only and are never sent to Groq. <a href="/api/import/templates">Download starter templates</a></>}</p>
-          {!preview && <button className="primary" disabled={busy || files.length !== 4} onClick={() => void inspect()}>{busy ? "Validating…" : "Validate files"}<ArrowRight size={16} /></button>}
+          {!mapping && !preview && <button className="primary" disabled={busy || files.length !== 4} onClick={() => void analyzeMapping()}>{busy ? "Analyzing…" : "Analyze & map headers"}<Sparkles size={16} /></button>}
+          {mapping && !preview && <button className="primary" disabled={busy || !mapping.safe_to_apply} onClick={() => void inspect()}>{busy ? "Validating…" : "Confirm mapping & validate"}<ArrowRight size={16} /></button>}
           {preview && !activated && <button className="primary" disabled={busy} onClick={() => void activate()}>{busy ? "Activating…" : "Activate dataset"}<ArrowRight size={16} /></button>}
         </div>
       </div>
@@ -319,14 +385,15 @@ export default function App() {
   const [students, setStudents] = useState<Student[]>([]);
   const [dataset, setDataset] = useState<DatasetInfo | null>(null);
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [dashboardFilters, setDashboardFilters] = useState<DashboardFilters>({});
   const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
-      const [dashboardData, studentData, config, datasetInfo] = await Promise.all([api.dashboard(), api.students(), api.config(), api.dataset()]);
+      const [dashboardData, studentData, config, datasetInfo] = await Promise.all([api.dashboard(dashboardFilters), api.students(), api.config(), api.dataset()]);
       setDashboard(dashboardData); setStudents(studentData); setAiEnabled(config.ai_enabled); setDataset(datasetInfo); setError(null);
     } catch { setError("The analytics service is unavailable. Start the API and refresh this page."); }
-  }, []);
+  }, [dashboardFilters]);
 
   useEffect(() => { void loadData(); }, [loadData]);
 
@@ -343,7 +410,7 @@ export default function App() {
       <div className="page-content">
         {error && <div className="error-banner"><CircleAlert size={20} />{error}</div>}
         {!error && !dashboard && <Loading />}
-        {dashboard && view === "overview" && <Overview data={dashboard} dataset={dataset} onNavigate={setView} />}
+        {dashboard && view === "overview" && <Overview data={dashboard} dataset={dataset} filters={dashboardFilters} onFilter={setDashboardFilters} onNavigate={setView} />}
         {dashboard && view === "copilot" && <Copilot aiEnabled={aiEnabled} />}
         {dashboard && view === "recommendations" && <Recommendations students={students} />}
         {dashboard && view === "import" && <ImportData dataset={dataset} onActivated={loadData} />}

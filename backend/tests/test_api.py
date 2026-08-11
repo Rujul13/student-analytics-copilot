@@ -17,6 +17,11 @@ def test_public_api_vertical_slice(monkeypatch):
         assert dashboard.json()["dataset_name"] == "OULAD Lite"
         assert dashboard.json()["metrics"][0]["value"] == 750
 
+        filtered_dashboard = client.get("/api/dashboard", params={"course_code": "CCC"})
+        assert filtered_dashboard.status_code == 200
+        assert filtered_dashboard.json()["metrics"][0]["value"] < 750
+        assert [point["label"] for point in filtered_dashboard.json()["modules"]] == ["CCC"]
+
         student = client.get("/api/students").json()[0]
         recommendations = client.get(f"/api/students/{student['student_id']}/recommendations")
         assert recommendations.status_code == 200

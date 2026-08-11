@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
+import re
 from dataclasses import dataclass
+from typing import Literal
 
 import pandas as pd
 from fastapi import UploadFile
+from groq import AsyncGroq
+from pydantic import BaseModel, ConfigDict
 
 from .repository import DatasetContext
 
@@ -31,6 +36,60 @@ TEMPLATE_ROWS = {
     "grades": ["SAMPLE-E1", "82"],
 }
 ROW_LIMITS = {"students": 5000, "courses": 500, "enrollments": 50000, "grades": 200000}
+
+HEADER_ALIASES = {
+    "students": {
+        "student_id": {"studentid", "student_id", "id_student", "learnerid", "learner_id"},
+        "display_name": {"displayname", "display_name", "studentname", "student_name", "name"},
+        "program": {"program", "programme", "major", "degree", "pathway"},
+    },
+    "courses": {
+        "course_code": {"coursecode", "course_code", "courseid", "course_id", "code_module", "modulecode"},
+        "course_name": {"coursename", "course_name", "title", "module_name", "subject"},
+        "department": {"department", "dept", "school", "faculty"},
+        "level": {"level", "courselevel", "course_level", "year_level"},
+        "credits": {"credits", "credit", "credit_hours"},
+        "offered_next_term": {"offerednextterm", "offered_next_term", "available_next_term", "is_offered"},
+        "prerequisites": {"prerequisites", "prerequisite", "prereqs"},
+        "programs": {"programs", "program", "programmes", "majors"},
+        "requirement_type": {"requirementtype", "requirement_type", "course_type"},
+    },
+    "enrollments": {
+        "enrollment_id": {"enrollmentid", "enrollment_id", "registration_id", "id_registration"},
+        "student_id": {"studentid", "student_id", "id_student", "learner_id"},
+        "course_code": {"coursecode", "course_code", "courseid", "course_id", "code_module"},
+        "presentation": {"presentation", "term", "semester", "code_presentation"},
+        "status": {"status", "enrollment_status", "registration_status"},
+        "final_result": {"finalresult", "final_result", "result", "outcome"},
+        "credits": {"credits", "credit", "studied_credits"},
+    },
+    "grades": {
+        "enrollment_id": {"enrollmentid", "enrollment_id", "registration_id", "id_registration"},
+        "weighted_grade": {"weightedgrade", "weighted_grade", "grade", "score", "numeric_grade", "final_grade"},
+    },
+}
+
+
+def _header_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower().strip())
+
+
+class ColumnMapping(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: str
+    target: str
+
+
+class FileMapping(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filename: str
+    role: Literal["students", "courses", "enrollments", "grades"]
+    columns: list[ColumnMapping]
+
+
+class MappingBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mappings: list[FileMapping]
 
 
 class ImportValidationError(ValueError):
@@ -73,6 +132,109 @@ async def parse_uploads(files: list[UploadFile]) -> list[ParsedUpload]:
         role, missing = _detect_role(set(frame.columns))
         parsed.append(ParsedUpload(upload.filename, role, frame, missing))
     return parsed
+
+
+def _deterministic_mapping(item: ParsedUpload) -> FileMapping:
+    columns = list(map(str, item.frame.columns))
+    scored: list[tuple[int, str, list[ColumnMapping]]] = []
+    for role, aliases in HEADER_ALIASES.items():
+        matches: list[ColumnMapping] = []
+        used_targets: set[str] = set()
+        for source in columns:
+            key = _header_key(source)
+            for target, candidates in aliases.items():
+                if target not in used_targets and key in {_header_key(value) for value in candidates}:
+                    matches.append(ColumnMapping(source=source, target=target))
+                    used_targets.add(target)
+                    break
+        scored.append((len(ROLE_COLUMNS[role] & used_targets), role, matches))
+    _, role, matches = max(scored, key=lambda value: (value[0], len(value[2])))
+    return FileMapping(filename=item.filename, role=role, columns=matches)
+
+
+def _mapping_payload(bundle: MappingBundle, parsed: list[ParsedUpload], ai_used: bool) -> dict:
+    parsed_by_name = {item.filename: item for item in parsed}
+    mappings = []
+    for mapping in bundle.mappings:
+        parsed_file = parsed_by_name.get(mapping.filename)
+        source_columns = set(map(str, parsed_file.frame.columns)) if parsed_file else set()
+        valid_targets = set(ROLE_HEADERS[mapping.role])
+        valid_columns = [item for item in mapping.columns if item.source in source_columns and item.target in valid_targets]
+        targets = {item.target for item in valid_columns}
+        missing = sorted(ROLE_COLUMNS[mapping.role] - targets)
+        mappings.append({
+            "filename": mapping.filename,
+            "role": mapping.role,
+            "columns": [item.model_dump() for item in valid_columns],
+            "missing": missing,
+        })
+    unique_roles = len({item["role"] for item in mappings}) == len(mappings)
+    safe = len(mappings) == 4 and unique_roles and not any(item["missing"] for item in mappings)
+    return {"mappings": mappings, "ai_used": ai_used, "safe_to_apply": safe}
+
+
+async def suggest_upload_mappings(parsed: list[ParsedUpload], api_key: str | None, model: str) -> dict:
+    deterministic = MappingBundle(mappings=[_deterministic_mapping(item) for item in parsed])
+    if not api_key:
+        return _mapping_payload(deterministic, parsed, False)
+    schemas = {role: sorted(columns) for role, columns in ROLE_COLUMNS.items()}
+    files = [{"filename": item.filename, "columns": list(map(str, item.frame.columns))} for item in parsed]
+    try:
+        client = AsyncGroq(api_key=api_key, timeout=12, max_retries=1)
+        completion = await client.chat.completions.create(
+            model=model,
+            temperature=0,
+            reasoning_effort="low",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Map CSV headers to four canonical academic tables. Use only supplied filenames and headers. "
+                        "Never invent a source column. Assign each file one unique role and each source column at most once. "
+                        "Map only when meaning is clear and omit uncertain mappings. Complete data values are intentionally unavailable."
+                    ),
+                },
+                {"role": "user", "content": json.dumps({"canonical_required_columns": schemas, "files": files})},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "csv_mapping_bundle", "strict": True, "schema": MappingBundle.model_json_schema()},
+            },
+        )
+        bundle = MappingBundle.model_validate_json(completion.choices[0].message.content or "{}")
+        if len({item.filename for item in bundle.mappings}) != len(parsed) or len({item.role for item in bundle.mappings}) != len(bundle.mappings):
+            raise ValueError("AI mapping did not assign unique files and roles")
+        return _mapping_payload(bundle, parsed, True)
+    except Exception:
+        return _mapping_payload(deterministic, parsed, False)
+
+
+def apply_upload_mappings(parsed: list[ParsedUpload], mapping_json: str | None) -> list[ParsedUpload]:
+    if not mapping_json:
+        return parsed
+    raw = json.loads(mapping_json)
+    bundle = MappingBundle.model_validate({
+        "mappings": [
+            {key: value for key, value in item.items() if key in {"filename", "role", "columns"}}
+            for item in raw.get("mappings", [])
+        ]
+    })
+    by_filename = {item.filename: item for item in bundle.mappings}
+    result = []
+    for item in parsed:
+        mapping = by_filename.get(item.filename)
+        if mapping is None:
+            raise ImportValidationError(f"No confirmed mapping was supplied for {item.filename}")
+        rename = {column.source: column.target for column in mapping.columns}
+        invalid_targets = sorted(set(rename.values()) - set(ROLE_HEADERS[mapping.role]))
+        if invalid_targets:
+            raise ImportValidationError(f"{item.filename} contains invalid canonical targets: {', '.join(invalid_targets)}")
+        if len(rename.values()) != len(set(rename.values())):
+            raise ImportValidationError(f"{item.filename} maps two columns to the same canonical field")
+        frame = item.frame.rename(columns=rename)
+        missing = sorted(ROLE_COLUMNS[mapping.role] - set(frame.columns))
+        result.append(ParsedUpload(item.filename, mapping.role if not missing else None, frame, missing))
+    return result
 
 
 def _normalize(frames: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame], bool]:

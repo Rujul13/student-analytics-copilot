@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .models import DashboardResponse, DistributionPoint, Metric, StudentSummary
+from .models import DashboardFilterOptions, DashboardResponse, DistributionPoint, Metric, StudentSummary
 from .repository import DatasetContext
 
 
@@ -18,16 +18,32 @@ def risk_label(average_grade: float, withdrawals: int = 0) -> str:
     return "Low"
 
 
-def dashboard(context: DatasetContext) -> DashboardResponse:
-    joined = _joined(context)
-    student_count = len(context.frames["students"])
-    average_grade = float(joined["weighted_grade"].mean())
-    completion_rate = float(joined["final_result"].isin(["Pass", "Distinction"]).mean() * 100)
-    withdrawal_rate = float(joined["final_result"].eq("Withdrawn").mean() * 100)
+def dashboard(
+    context: DatasetContext,
+    course_code: str | None = None,
+    presentation: str | None = None,
+    final_result: str | None = None,
+) -> DashboardResponse:
+    source_enrollments = context.frames["enrollments"]
+    enrollments = source_enrollments
+    if course_code:
+        enrollments = enrollments[enrollments["course_code"].eq(course_code)]
+    if presentation:
+        enrollments = enrollments[enrollments["presentation"].eq(presentation)]
+    if final_result:
+        enrollments = enrollments[enrollments["final_result"].eq(final_result)]
+    joined = enrollments.merge(context.frames["grades"], on="enrollment_id", how="left")
+    student_count = int(enrollments["student_id"].nunique()) if any([course_code, presentation, final_result]) else len(context.frames["students"])
+    average_grade = float(joined["weighted_grade"].mean()) if len(joined) else 0.0
+    completion_rate = float(joined["final_result"].isin(["Pass", "Distinction"]).mean() * 100) if len(joined) else 0.0
+    withdrawal_rate = float(joined["final_result"].eq("Withdrawn").mean() * 100) if len(joined) else 0.0
     student_rollup = joined.groupby("student_id").agg(
         average_grade=("weighted_grade", "mean"), withdrawals=("final_result", lambda values: int((values == "Withdrawn").sum()))
-    )
-    student_rollup["risk"] = student_rollup.apply(lambda row: risk_label(row.average_grade, row.withdrawals), axis=1)
+    ) if len(joined) else pd.DataFrame(columns=["average_grade", "withdrawals"])
+    if len(student_rollup):
+        student_rollup["risk"] = student_rollup.apply(lambda row: risk_label(row.average_grade, row.withdrawals), axis=1)
+    else:
+        student_rollup["risk"] = pd.Series(dtype="object")
     high_risk = int(student_rollup["risk"].eq("High").sum())
 
     outcomes = joined["final_result"].value_counts()
@@ -43,9 +59,14 @@ def dashboard(context: DatasetContext) -> DashboardResponse:
             Metric(label="Completion rate", value=round(completion_rate, 1), display=f"{completion_rate:.1f}%", delta="Pass or distinction", direction="up"),
             Metric(label="High-risk learners", value=high_risk, display=str(high_risk), delta=f"{withdrawal_rate:.1f}% withdrawal rate", direction="down"),
         ],
-        outcomes=[DistributionPoint(label=str(label), value=round(count / len(joined) * 100, 1), count=int(count)) for label, count in outcomes.items()],
+        outcomes=[DistributionPoint(label=str(label), value=round(count / len(joined) * 100, 1), count=int(count)) for label, count in outcomes.items()] if len(joined) else [],
         modules=[DistributionPoint(label=str(code), value=round(float(row["mean"]), 1), count=int(row["count"])) for code, row in module_rollup.iterrows()],
-        risk_bands=[DistributionPoint(label=label, value=round(count / student_count * 100, 1), count=int(count)) for label, count in risks.items()],
+        risk_bands=[DistributionPoint(label=label, value=round(count / max(student_count, 1) * 100, 1), count=int(count)) for label, count in risks.items()],
+        filter_options=DashboardFilterOptions(
+            courses=sorted(map(str, source_enrollments["course_code"].dropna().unique())),
+            presentations=sorted(map(str, source_enrollments["presentation"].dropna().unique())),
+            outcomes=sorted(map(str, source_enrollments["final_result"].dropna().unique())),
+        ),
     )
 
 

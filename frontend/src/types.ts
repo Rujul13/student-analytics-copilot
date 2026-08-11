@@ -22,6 +22,17 @@ export interface DashboardData {
   outcomes: DistributionPoint[];
   modules: DistributionPoint[];
   risk_bands: DistributionPoint[];
+  filter_options: {
+    courses: string[];
+    presentations: string[];
+    outcomes: string[];
+  };
+}
+
+export interface DashboardFilters {
+  course_code?: string;
+  presentation?: string;
+  final_result?: string;
 }
 
 export interface DatasetInfo {
@@ -58,6 +69,17 @@ export interface ImportPreview {
   files: ImportFilePreview[];
 }
 
+export interface ImportMappingSuggestion {
+  mappings: {
+    filename: string;
+    role: "students" | "courses" | "enrollments" | "grades";
+    columns: { source: string; target: string }[];
+    missing: string[];
+  }[];
+  ai_used: boolean;
+  safe_to_apply: boolean;
+}
+
 export interface Student {
   student_id: string;
   display_name: string;
@@ -82,6 +104,7 @@ export interface Recommendation {
   requirement_type: string;
   prerequisites_met: string[];
   narrative: string | null;
+  predicted_success_probability: number | null;
 }
 
 export interface RecommendationResponse {
@@ -90,6 +113,16 @@ export interface RecommendationResponse {
   recommendations: Recommendation[];
   ai_explanation_enabled: boolean;
   catalog_label: string;
+  ranking_mode: "deterministic" | "hybrid-llm";
+  success_model: {
+    model_name: string;
+    training_records: number;
+    test_records: number;
+    accuracy: number;
+    brier_score: number;
+    roc_auc: number;
+    dataset_version: string;
+  } | null;
 }
 
 export interface QueryResponse {
@@ -98,4 +131,9 @@ export interface QueryResponse {
   rows: Record<string, string | number>[];
   calculation_trace: string[];
   ai_used: boolean;
+}
+
+export interface ConversationTurn {
+  question: string;
+  answer: string;
 }

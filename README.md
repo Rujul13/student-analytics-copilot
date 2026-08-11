@@ -6,7 +6,18 @@ An evidence-first OULAD analytics application with three core experiences:
 - safe natural-language data querying;
 - transparent course recommendations.
 
-The recommendation engine uses a clearly labeled fictional demo catalog because OULAD does not contain prerequisites, degree requirements, or future offerings. Eligibility and ranking are deterministic; Groq may explain an existing recommendation but cannot create, remove, reorder, or rescore one.
+The living rationale for the system design, implemented trade-offs, evaluated alternatives, and improvement roadmap is maintained in [DECISIONS.md](DECISIONS.md).
+
+The recommendation engine uses a clearly labeled fictional demo catalog because OULAD does not contain prerequisites, degree requirements, or future offerings. Eligibility and fit scores are deterministic; Groq may rerank only the already-eligible top candidate set and explain the order, but cannot create a course, bypass a rule, or alter a verified score.
+
+## Enhanced assignment coverage
+
+- Dashboard filters and clickable drill-downs cover module, presentation, and outcome, with an outcome donut visualization.
+- The analytics copilot keeps bounded conversation history, plans against a typed capability catalog, executes only approved Pandas operations, and asks Groq to phrase verified results naturally.
+- Assignment-level questions for distinctions and learners failing multiple courses are supported, along with scoped learner profiles and recommendation questions.
+- CSV imports include an AI-assisted header-mapping review step. Only filenames and headers are sent for mapping; users must confirm before deterministic validation and atomic activation.
+- Recommendation eligibility remains deterministic. Groq may rerank only the already-eligible top candidate set through a strict schema, and the UI reports whether hybrid reranking succeeded.
+- A temporal academic-history logistic baseline provides held-out success estimates with accuracy, ROC AUC, and Brier score disclosed in the UI. Estimates are explicitly not guarantees.
 
 ## Current build status
 
@@ -36,7 +47,7 @@ The reproducible canonical cohort is stored in `backend/data/processed` with its
 
 ## AI workflow behavior
 
-With `GROQ_API_KEY`, a bounded LlamaIndex Workflow retrieves relevant analytics capabilities with BM25 and asks Groq for a strict, schema-validated `AnalyticsPlan`. The plan can select only allowlisted Pandas executors; it cannot contain Python, SQL, expressions, column names, or function references. The result includes an audit trace.
+With `GROQ_API_KEY`, a bounded LlamaIndex Workflow retrieves relevant analytics capabilities with BM25 and asks Groq for a strict, schema-validated `AnalyticsPlan`. The plan can select only allowlisted Pandas executors; it cannot contain Python, SQL, expressions, column names, or function references. A second bounded call may turn the verified result into a conversational answer, but cannot add unsupported values. The result includes an audit trace.
 
 Without the key—or when the live planner times out or fails validation—the dashboard, deterministic rankings, and safe fallback query catalog continue to work.
 

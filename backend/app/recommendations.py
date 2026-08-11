@@ -7,8 +7,9 @@ from pydantic import BaseModel, ConfigDict
 
 from .analytics import students
 from .catalog import split_codes
-from .models import Recommendation, RecommendationResponse
+from .models import Recommendation, RecommendationResponse, SuccessModelSummary
 from .repository import DatasetContext
+from .success_prediction import candidate_features, get_success_model
 
 
 class NarrativeItem(BaseModel):
@@ -20,6 +21,17 @@ class NarrativeItem(BaseModel):
 class NarrativeBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
     explanations: list[NarrativeItem]
+
+
+class RankedNarrativeItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    course_code: str
+    narrative: str
+
+
+class RankedNarrativeBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rankings: list[RankedNarrativeItem]
 
 
 def _completed_and_current(context: DatasetContext, student_id: str) -> tuple[set[str], set[str]]:
@@ -60,7 +72,7 @@ def _score(
     return total, requirement_fit, performance_fit, progression_fit
 
 
-def recommend(context: DatasetContext, student_id: str) -> RecommendationResponse:
+def recommend(context: DatasetContext, student_id: str, limit: int = 3) -> RecommendationResponse:
     student_map = {student.student_id: student for student in students(context)}
     if student_id not in student_map:
         raise KeyError(student_id)
@@ -68,6 +80,7 @@ def recommend(context: DatasetContext, student_id: str) -> RecommendationRespons
     completed, current = _completed_and_current(context, student_id)
     catalog = context.frames["courses"]
     candidates: list[Recommendation] = []
+    success_model = get_success_model(context)
 
     for row in catalog.itertuples():
         prerequisites = split_codes(row.prerequisites)
@@ -123,6 +136,17 @@ def recommend(context: DatasetContext, student_id: str) -> RecommendationRespons
                 progression_fit=progression_fit,
                 requirement_type=row.requirement_type,
                 prerequisites_met=sorted(prerequisites),
+                predicted_success_probability=(
+                    success_model.predict(candidate_features(
+                        context,
+                        student.student_id,
+                        student.average_grade,
+                        student.withdrawals,
+                        student.credits_earned,
+                        int(row.level),
+                    ))
+                    if success_model else None
+                ),
             )
         )
 
@@ -131,14 +155,18 @@ def recommend(context: DatasetContext, student_id: str) -> RecommendationRespons
     return RecommendationResponse(
         student=student,
         capability_mode="graduation-aware" if graduation_aware else "performance-only",
-        recommendations=candidates[:3],
+        recommendations=candidates[:limit],
         ai_explanation_enabled=False,
         catalog_label="Fictional demo catalog enrichment" if context.mode.startswith("canonical") or context.mode == "development-fixture" else "User-provided catalog",
+        ranking_mode="deterministic",
+        success_model=SuccessModelSummary(**success_model.evaluation.__dict__) if success_model else None,
     )
 
 
 async def add_ai_explanations(response: RecommendationResponse, api_key: str | None, model: str) -> RecommendationResponse:
+    final_limit = min(3, len(response.recommendations))
     if not api_key or not response.recommendations:
+        response.recommendations = response.recommendations[:final_limit]
         return response
     payload = {
         "student": {
@@ -153,6 +181,7 @@ async def add_ai_explanations(response: RecommendationResponse, api_key: str | N
                 "course_code": item.course_code,
                 "course_name": item.course_name,
                 "score": item.score,
+                "predicted_success_probability": item.predicted_success_probability,
                 "reasons": item.reasons,
             }
             for item in response.recommendations
@@ -168,9 +197,10 @@ async def add_ai_explanations(response: RecommendationResponse, api_key: str | N
                 {
                     "role": "system",
                     "content": (
-                        "Explain each already-ranked course recommendation in one concise sentence. "
-                        "Do not change ranking, eligibility, scores, or claim the fictional demo pathway is an official degree program. "
-                        "Use only the supplied academic evidence and do not infer demographics."
+                        "Rank every supplied eligible course from best to worst for this learner, then explain each in one concise sentence. "
+                        "You may change order but must include every supplied course exactly once. Never add a course, change eligibility or scores, "
+                        "or claim the fictional demo pathway is official. Use only supplied academic evidence and do not infer demographics. "
+                        "Treat predicted success as an evaluated baseline estimate, not a guarantee."
                     ),
                 },
                 {"role": "user", "content": json.dumps(payload)},
@@ -178,19 +208,27 @@ async def add_ai_explanations(response: RecommendationResponse, api_key: str | N
             response_format={
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "recommendation_explanations",
+                    "name": "recommendation_rankings",
                     "strict": True,
-                    "schema": NarrativeBundle.model_json_schema(),
+                    "schema": RankedNarrativeBundle.model_json_schema(),
                 },
             },
         )
         content = completion.choices[0].message.content
-        bundle = NarrativeBundle.model_validate_json(content or "{}")
+        bundle = RankedNarrativeBundle.model_validate_json(content or "{}")
         allowed = {item.course_code for item in response.recommendations}
-        narratives = {item.course_code: item.narrative for item in bundle.explanations if item.course_code in allowed}
-        for recommendation in response.recommendations:
-            recommendation.narrative = narratives.get(recommendation.course_code)
-        response.ai_explanation_enabled = bool(narratives)
+        returned = [item.course_code for item in bundle.rankings]
+        if len(returned) != len(set(returned)) or set(returned) != allowed:
+            raise ValueError("LLM ranking must contain every eligible candidate exactly once")
+        by_code = {item.course_code: item for item in response.recommendations}
+        response.recommendations = [by_code[item.course_code] for item in bundle.rankings]
+        for item in bundle.rankings:
+            by_code[item.course_code].narrative = item.narrative
+        response.recommendations = response.recommendations[:final_limit]
+        response.ai_explanation_enabled = True
+        response.ranking_mode = "hybrid-llm"
     except Exception:
         response.ai_explanation_enabled = False
+        response.ranking_mode = "deterministic"
+        response.recommendations = response.recommendations[:final_limit]
     return response
