@@ -56,6 +56,17 @@ def test_accepts_a_valid_groupby_table_program():
         "result = pd.read_csv('x.csv')",
         "result = enrollments.to_pickle('x.pkl')",
         "enrollments.drop(columns=['course_code'], inplace=True)\nresult = 1",
+        # Adversarial cases confirmed as real bypasses during Task 2 code review; each must
+        # independently be rejected, not just the literal `inplace=True` case above.
+        "flag = True\nenrollments.drop(columns=['course_code'], inplace=flag)\nresult = 1",
+        "enrollments.sort_values('course_code', inplace=(1 == 1))\nresult = 1",
+        "kwargs = {'inplace': True}\nenrollments.drop(columns=['course_code'], **kwargs)\nresult = 1",
+        "enrollments.pop('course_code')\nresult = 1",
+        "enrollments.update(grades)\nresult = 1",
+        "handle = pd.io.common.get_handle('secret.csv', 'r')\nresult = 1",
+        "np.save('out.npy', enrollments.values)\nresult = 1",
+        "arr = np.load('/etc/passwd')\nresult = arr",
+        "result = np.fromfile('/etc/passwd')",
     ],
 )
 def test_rejects_unsafe_or_disallowed_code(code):
