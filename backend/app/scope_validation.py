@@ -49,6 +49,8 @@ class ScopeFilters:
     requested_count: int | None = None
     group_by_module: bool = False
     wants_rate: bool = False
+    wants_distinct_learners: bool = False
+    wants_risk: bool = False
     missing_fields: list[str] = field(default_factory=list)
 
 
@@ -70,6 +72,15 @@ def extract_scope(question: str, context: DatasetContext) -> ScopeFilters:
     # match inside "OULAD-113910" - the boundary the course_codes line above already relies on.
     scope.presentations = [pres for pres in known_presentations if re.search(rf"\b{re.escape(pres.lower())}\b", normalized)]
     scope.student_ids = [sid for sid in known_student_ids if re.search(rf"\b{re.escape(sid.lower())}\b", normalized)]
+    # Administrators naturally say "learner 242636" even though the canonical ID stored in
+    # the OULAD cohort is "OULAD-242636". Resolve a numeric/short alias only when it maps to
+    # exactly one canonical learner, then require the generated code to use that full ID.
+    learner_alias = re.search(r"\b(?:learner|student)\s+([a-z0-9-]+)\b", normalized)
+    if not scope.student_ids and learner_alias:
+        alias = learner_alias.group(1)
+        matches = [sid for sid in known_student_ids if sid.lower() == alias or sid.lower().endswith(f"-{alias}")]
+        if len(matches) == 1:
+            scope.student_ids = matches
     scope.outcomes = sorted(
         {
             canonical
@@ -102,6 +113,11 @@ def extract_scope(question: str, context: DatasetContext) -> ScopeFilters:
     # wants_rate, which then wrongly demands rate-shaped code from an otherwise-correct
     # program (e.g. "Can you generate a report of the average grade in BBB?").
     scope.wants_rate = any(re.search(rf"\b{term}\b", normalized) for term in ("rate", "percentage", "percent"))
+    scope.wants_distinct_learners = bool(
+        re.search(r"\bhow many\s+(?:students|learners)\b", normalized)
+        or re.search(r"\bnumber of\s+(?:students|learners)\b", normalized)
+    )
+    scope.wants_risk = bool(re.search(r"\b(?:risk|academic-support priority|support priority)\b", normalized))
     scope.missing_fields = sorted(
         {canonical for term, canonical in DEMOGRAPHIC_TERMS.items() if re.search(rf"\b{re.escape(term)}\b", normalized)}
     )
@@ -139,6 +155,17 @@ def verify_scope_preserved(scope: ScopeFilters, code: str, referenced_columns: l
         # correct way to compute a rate/proportion in Pandas without an explicit `/` or the
         # literal word "rate" appearing anywhere in the code - accept it as evidence too.
         return "The generated code returned a count rather than a calculated rate."
+    if scope.wants_distinct_learners:
+        unique_markers = ("nunique(", ".unique(", "drop_duplicates(")
+        grouped_learner_count = "groupby(" in code and "student_id" in code and any(
+            marker in code for marker in ("len(", ".size", ".shape[0]")
+        )
+        if "student_id" not in code or not (any(marker in code for marker in unique_markers) or grouped_learner_count):
+            return "The question asks for learners, but the generated code counted enrollment records instead of distinct student_id values."
+    if scope.wants_risk:
+        required_markers = ("risk", "weighted_grade", "withdraw")
+        if not all(marker in code.lower() for marker in required_markers):
+            return "The generated code did not calculate the requested academic-support risk from average grade and withdrawals."
     return None
 
 

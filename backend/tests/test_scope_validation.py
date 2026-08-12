@@ -40,6 +40,12 @@ def test_extracts_exact_learner_id(context):
     assert scope.student_ids == ["OULAD-242636"]
 
 
+def test_resolves_a_unique_numeric_learner_alias_to_the_canonical_id(context):
+    scope = extract_scope("What is learner 242636's average grade and risk?", context)
+    assert scope.student_ids == ["OULAD-242636"]
+    assert scope.wants_risk is True
+
+
 def test_detects_highest_and_lowest(context):
     assert extract_scope("Which module has the highest withdrawal rate?", context).sort_direction == "highest"
     assert extract_scope("What about the lowest?", context).sort_direction == "lowest"
@@ -131,8 +137,8 @@ def test_verify_scope_preserved_rejects_code_dropping_the_requested_outcome(cont
 
 def test_verify_scope_preserved_accepts_code_that_applies_the_requested_outcome(context):
     scope = extract_scope("How many students passed BBB?", context)
-    code = "result = int(enrollments[(enrollments['course_code'] == 'BBB') & (enrollments['final_result'] == 'Pass')].shape[0])"
-    assert verify_scope_preserved(scope, code, ["course_code", "final_result"]) is None
+    code = "result = int(enrollments.loc[(enrollments['course_code'] == 'BBB') & (enrollments['final_result'] == 'Pass'), 'student_id'].nunique())"
+    assert verify_scope_preserved(scope, code, ["course_code", "final_result", "student_id"]) is None
 
 
 def test_verify_scope_preserved_rejects_code_ignoring_the_requested_count(context):
@@ -154,6 +160,39 @@ def test_verify_scope_preserved_accepts_code_that_applies_the_requested_count(co
         "result = merged[merged['course_code'] == 'CCC'].sort_values('weighted_grade').head(5)\n"
     )
     assert verify_scope_preserved(scope, code, ["course_code", "weighted_grade"]) is None
+
+
+def test_rejects_enrollment_row_count_for_a_distinct_student_question(context):
+    scope = extract_scope("How many students withdrew?", context)
+    assert scope.wants_distinct_learners is True
+    code = "result = int(enrollments[enrollments['final_result'] == 'Withdrawn'].shape[0])"
+    error = verify_scope_preserved(scope, code, ["student_id", "final_result"])
+    assert error is not None
+    assert "distinct" in error
+
+
+def test_accepts_distinct_student_count_for_a_student_question(context):
+    scope = extract_scope("How many students withdrew?", context)
+    code = "result = int(enrollments.loc[enrollments['final_result'] == 'Withdrawn', 'student_id'].nunique())"
+    assert verify_scope_preserved(scope, code, ["student_id", "final_result"]) is None
+
+
+def test_risk_question_requires_the_defined_grade_and_withdrawal_calculation(context):
+    scope = extract_scope("What is learner 242636's average grade and risk?", context)
+    wrong_code = "result = students[students['student_id'] == 'OULAD-242636']"
+    error = verify_scope_preserved(scope, wrong_code, ["student_id"])
+    assert error is not None
+    assert "risk" in error.lower()
+
+    valid_code = (
+        "joined = enrollments.merge(grades, on='enrollment_id', how='left')\n"
+        "learner = joined[joined['student_id'] == 'OULAD-242636']\n"
+        "average_grade = float(learner['weighted_grade'].mean())\n"
+        "withdrawals = int((learner['final_result'] == 'Withdrawn').sum())\n"
+        "risk = 'High' if average_grade < 50 or withdrawals >= 2 else ('Medium' if average_grade < 65 or withdrawals == 1 else 'Low')\n"
+        "result = {'student_id': 'OULAD-242636', 'average_grade': average_grade, 'risk': risk}\n"
+    )
+    assert verify_scope_preserved(scope, valid_code, ["student_id", "weighted_grade", "final_result"]) is None
 
 
 def test_extract_scope_does_not_confuse_a_learner_id_with_its_numeric_prefix():

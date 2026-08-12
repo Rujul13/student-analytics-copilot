@@ -33,6 +33,7 @@ METRIC_DEFINITIONS = [
     "withdrawal rate = withdrawn enrollment records / all enrollment records * 100",
     "completion rate = Pass or Distinction enrollment records / all enrollment records * 100",
     "average grade = mean of available weighted_grade values",
+    "academic-support risk per learner: fill missing average_grade with 0; High if average_grade < 50 or withdrawals >= 2; Medium if average_grade < 65 or withdrawals == 1; otherwise Low",
 ]
 
 MAX_CATEGORICAL_EXAMPLES = 12
@@ -102,6 +103,9 @@ async def generate_pandas_program(
         "Never import modules, open files, or access the network, filesystem, process, or environment. "
         "Prefer a DataFrame result with evidence columns for ranking, comparison, or 'which module/learner' questions. "
         "A rate question must compute a numerator and denominator, not only a count. "
+        "When asked how many students or learners meet a condition, count distinct student_id values, never enrollment rows. "
+        "A learner may be named by the numeric suffix of an OULAD ID; use the full canonical student_id supplied by scope validation. "
+        "For academic-support risk, use the exact risk definition in schema.metric_definitions and return a column named `risk`. "
         "Preserve every exact course code, presentation, or learner identifier mentioned in the question. "
         "Limit any table result to at most 100 rows using `.head(100)` when appropriate."
     )
@@ -145,6 +149,7 @@ async def synthesize_answer(
         "question": question,
         "interpretation": interpretation,
         "computed_result": normalized_rows[:20],
+        "returned_row_count": len(normalized_rows),
         "dataset_name": dataset_name,
         "dataset_version": dataset_version,
     }
@@ -159,7 +164,8 @@ async def synthesize_answer(
                     "Write one concise, natural-language answer using only the supplied computed_result. "
                     "Do not invent numbers, causes, or explanations that are not in the payload. "
                     "State the key figure or finding directly, including the relevant module, learner, metric, and unit. "
-                    "Do not answer with only a bare identifier or number."
+                    "Do not answer with only a bare identifier or number. If returned_row_count exceeds 10, state the total, "
+                    "mention at most three examples, and tell the user the evidence table contains the returned rows."
                 ),
             },
             {"role": "user", "content": json.dumps(payload)},
