@@ -229,3 +229,12 @@ def test_validated_failure_profile_and_recommendation_plans():
     assert recommendations.result_type == "table"
     assert recommendations.rows
     assert all("course_code" in row for row in recommendations.rows)
+
+
+def test_pandas_agent_and_answer_models_have_expected_defaults(monkeypatch):
+    from app.config import Settings
+    monkeypatch.delenv("PANDAS_AGENT_MODEL", raising=False)
+    monkeypatch.delenv("ANSWER_MODEL", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.pandas_agent_model == "openai/gpt-oss-120b"
+    assert settings.answer_model == "openai/gpt-oss-20b"

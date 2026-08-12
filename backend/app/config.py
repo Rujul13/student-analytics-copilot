@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     groq_api_key: str | None = None
     llm_model: str = "openai/gpt-oss-20b"
+    pandas_agent_model: str = "openai/gpt-oss-120b"
+    answer_model: str = "openai/gpt-oss-20b"
     app_secret: str = "development-only"
     dataset_path: str | None = None
     cors_origins: str = "http://localhost:5173"
