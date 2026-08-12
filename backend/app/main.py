@@ -205,7 +205,11 @@ async def query_endpoint(payload: QueryRequest, request: Request) -> QueryRespon
         raise HTTPException(status_code=429, detail="Query rate limit exceeded; retry in one minute")
     context = _context(request)
     settings = request.app.state.settings
-    workflow = AnalyticsWorkflow(context, settings.groq_api_key, settings.llm_model) if settings.groq_api_key else None
+    workflow = (
+        AnalyticsWorkflow(context, settings.groq_api_key, settings.pandas_agent_model, settings.answer_model)
+        if settings.groq_api_key
+        else None
+    )
     return await run_copilot(context, payload.question, workflow, [turn.model_dump() for turn in payload.history])
 
 

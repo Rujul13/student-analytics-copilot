@@ -25,7 +25,7 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
         return QueryResponse(
             answer="The curated application dataset does not include demographic fields, so I cannot calculate that filtered result.",
             result_type="unsupported",
-            calculation_trace=["Detected a requested filter that is not present in the application dataset"],
+            execution_mode="deterministic-fallback",
             ai_used=False,
         )
     course_code = mentioned_codes[0] if len(mentioned_codes) == 1 else None
@@ -39,13 +39,13 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
                 answer=f"{learner.display_name} has a {learner.average_grade:.1f}% average and a {learner.risk.lower()} academic-support priority.",
                 result_type="table",
                 rows=[learner.model_dump()],
-                calculation_trace=["Matched a scoped learner-profile intent", "Executed an allowlisted learner lookup", f"Dataset version: {context.version}"],
+                execution_mode="deterministic-fallback",
                 ai_used=False,
             )
         return QueryResponse(
             answer="I recognized a learner-specific question, but the requested learner operation is not available in fallback mode.",
             result_type="unsupported",
-            calculation_trace=["Preserved the learner scope", "No cohort metric was substituted", "No code or SQL was generated"],
+            execution_mode="deterministic-fallback",
             ai_used=False,
         )
     if "distinction" in normalized:
@@ -55,7 +55,7 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
             answer=f"{count} learners have at least one Distinction.",
             result_type="metric",
             rows=[{"metric": "Learners with a Distinction", "value": count}],
-            calculation_trace=["Matched the distinction metric", "Counted distinct learners with a Distinction outcome", f"Dataset version: {context.version}"],
+            execution_mode="deterministic-fallback",
             ai_used=False,
         )
     if "withdraw" in normalized or "withdrew" in normalized:
@@ -65,7 +65,7 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
             answer=f"{count} learners withdrew from at least one course.",
             result_type="metric",
             rows=[{"metric": "Learners with a withdrawal", "value": count}],
-            calculation_trace=["Matched the withdrawal metric", "Counted distinct learners with at least one Withdrawn outcome", f"Dataset version: {context.version}"],
+            execution_mode="deterministic-fallback",
             ai_used=False,
         )
     if "fail" in normalized and any(phrase in normalized for phrase in ["more than one", "multiple", "at least two"]):
@@ -91,7 +91,7 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
             answer=f"I found {len(rows)} learners who failed more than one course.",
             result_type="table",
             rows=rows[:20],
-            calculation_trace=["Matched the multi-course failure intent", "Counted distinct failed courses per learner", f"Dataset version: {context.version}"],
+            execution_mode="deterministic-fallback",
             ai_used=False,
         )
     metric_map = {
@@ -110,7 +110,7 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
                 answer=f"{metric.label} is {metric.display}.",
                 result_type="metric",
                 rows=[{"metric": metric.label, "value": metric.value}],
-                calculation_trace=["Matched a supported metric intent", "Executed an allowlisted aggregate", f"Dataset version: {context.version}"],
+                execution_mode="deterministic-fallback",
                 ai_used=False,
             )
     if any(phrase in normalized for phrase in ["at risk", "at-risk", "lowest", "struggling"]):
@@ -119,12 +119,12 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
             answer=f"I found {sum(student['risk'] == 'High' for student in rows)} high-priority learners in the first eight priority records.",
             result_type="table",
             rows=rows,
-            calculation_trace=["Matched the risk-ranking intent", "Calculated grade and withdrawal risk", "Sorted by risk band and grade", f"Dataset version: {context.version}"],
+            execution_mode="deterministic-fallback",
             ai_used=False,
         )
     return QueryResponse(
         answer=data_availability_answer(question),
         result_type="unsupported",
-        calculation_trace=["No matching metric or available data field was found"],
+        execution_mode="deterministic-fallback",
         ai_used=False,
     )
