@@ -13,3 +13,6 @@ backend/data/raw/*
 !backend/data/raw/.gitkeep
 backend/data/oulad/*
 !backend/data/oulad/.gitkeep
+
+# superpowers subagent-driven-development scratch workspace
+.superpowers/
