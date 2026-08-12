@@ -3,7 +3,7 @@
 **Project:** Student Analytics Copilot
 **Product name:** Northstar
 **Status:** Living decision record
-**Last reviewed:** 2026-08-11
+**Last reviewed:** 2026-08-12
 **Deployed application:** <https://student-analytics-copilot.onrender.com/>
 **Repository:** <https://github.com/Rujul13/student-analytics-copilot>
 
@@ -34,9 +34,9 @@ This is the architectural source of truth for the **system that is actually depl
 
 The application follows one governing rule:
 
-> **AI understands and communicates; validated data rules calculate and decide.**
+> **AI may propose a calculation; only validated local execution and returned evidence make it an answer.**
 
-The LLM does not calculate dashboard metrics, run generated Python, produce executable SQL, decide course eligibility, or set recommendation scores. It is used only to convert language into a constrained plan and to explain results that the application has already verified.
+For natural-language analytics, the 120B model writes a bounded Pandas program, but it cannot execute it. The application checks its AST and requested scope, runs accepted code in an isolated child process, and gives only the normalized result to the 20B answer model. Dashboard metrics and recommendation eligibility remain deterministic; the recommendation model may only rerank verified candidates.
 
 This boundary has produced the best results so far because it combines natural-language usability with deterministic analytics, testability, and visible evidence.
 
@@ -44,11 +44,12 @@ This boundary has produced the best results so far because it combines natural-l
 flowchart LR
     U["React user interface"] --> API["FastAPI boundary"]
     API --> LI["LlamaIndex workflow"]
-    LI --> R["BM25 capability retrieval"]
-    R --> G["Groq structured planning"]
-    G --> V["Pydantic validation"]
-    V --> P["Allowlisted Pandas executors"]
-    P --> A["Answer, rows, and calculation trace"]
+    LI --> SC["Schema context + deterministic scope"]
+    SC --> GEN["Groq 120B generates Pandas code"]
+    GEN --> VAL["AST validation + scope check"]
+    VAL --> EXEC["Isolated local execution"]
+    EXEC --> SYN["Groq 20B answer synthesis"]
+    SYN --> A["Answer and evidence rows"]
     API --> D["Deterministic dashboard"]
     API --> REC["Deterministic recommendation engine"]
     REC --> GX["Optional Groq explanation"]
@@ -61,9 +62,9 @@ flowchart LR
 | Frontend | React, TypeScript, Vite, custom CSS, Lucide icons | Accepted |
 | Backend | FastAPI and Pydantic | Accepted |
 | Data orchestration | Bounded LlamaIndex Workflow | Accepted |
-| Capability retrieval | BM25 over a small semantic capability catalog | Accepted |
-| LLM | Groq using `openai/gpt-oss-20b` | Accepted, provider abstraction recommended |
-| Analytics | Prewritten, allowlisted Pandas calculations | Accepted |
+| Query context | Canonical schema metadata plus deterministic scope extraction | Accepted |
+| LLM | Groq using `openai/gpt-oss-120b` for code and `openai/gpt-oss-20b` for answers | Accepted, provider abstraction recommended |
+| Analytics | Generated, AST-validated, scope-checked Pandas in a spawned process; deterministic fallback retained | Accepted for demo |
 | Default dataset | Reproducible OULAD curated 750-learner cohort | Accepted |
 | Recommendation catalog | Authentic OULAD historical modules only | Accepted; supersedes fictional demo catalog |
 | Recommendation ranking | Deterministic eligibility and scoring, held-out success baseline, bounded LLM reranking | Provisional pending educator validation |
@@ -76,7 +77,7 @@ flowchart LR
 
 ### ADR-001 - Use an evidence-first, bounded-AI architecture
 
-**Status:** Accepted
+**Status:** Superseded for natural-language analytics by ADR-025; retained for dashboard and recommendations
 
 **Context.** Education analytics can influence interventions and course choices. A fluent but incorrect response is more harmful than a limited but auditable answer.
 
@@ -187,7 +188,7 @@ flowchart LR
 
 ### ADR-008 - Use a bounded Workflow, not an autonomous agent
 
-**Status:** Accepted
+**Status:** Superseded by ADR-025 for implementation details; the bounded workflow principle remains accepted
 
 **Decision.** Model the known sequence as explicit workflow steps. The deployed analytics workflow retrieves, plans, validates through Pydantic, and executes. It does not let a model choose arbitrary tools in a loop.
 
@@ -201,7 +202,7 @@ flowchart LR
 
 ### ADR-009 - Use BM25 over semantic capability metadata
 
-**Status:** Accepted
+**Status:** Superseded by ADR-025 for natural-language analytics
 
 **Decision.** Retrieve over small text nodes describing the supported analytics capabilities. Do not embed individual student or grade records.
 
@@ -215,7 +216,7 @@ flowchart LR
 
 ### ADR-010 - Use Groq strict structured outputs for planning
 
-**Status:** Accepted
+**Status:** Superseded by ADR-025; strict structured output remains in use for generated programs and answers
 
 **Decision.** Use Groq with `openai/gpt-oss-20b`, temperature 0 for planning, low reasoning effort, and a strict JSON Schema generated from a Pydantic `AnalyticsPlan`.
 
@@ -233,7 +234,7 @@ flowchart LR
 
 ### ADR-011 - Use allowlisted Pandas executors instead of generated Text-to-Pandas or Text-to-SQL
 
-**Status:** Accepted
+**Status:** Superseded by ADR-025 for the primary natural-language path; retained as deterministic fallback
 
 **Decision.** Map validated intents to prewritten Pandas operations. Do not use `eval`, `exec`, LlamaIndex's experimental Pandas query engine, or unrestricted generated SQL.
 
@@ -379,7 +380,7 @@ Groq may rerank only the already-eligible top candidate set and write a one-sent
 
 ### ADR-020 - Expose calculation traces and data provenance
 
-**Status:** Accepted
+**Status:** Superseded by ADR-025 for calculation traces; dataset provenance and bounded evidence remain accepted
 
 **Decision.** Return a trace with query results and display dataset name, version, source, license, and enrichment boundary in the UI.
 
@@ -437,6 +438,26 @@ Groq may rerank only the already-eligible top candidate set and write a one-sent
 
 **How it helped.** The build could focus on a credible vertical slice without hiding critical institutional requirements behind demo language.
 
+### ADR-025 - Replace the fixed-capability query router with a genuine CSV/Pandas data agent
+
+**Status:** Accepted on 2026-08-12. This supersedes ADR-001, ADR-008, ADR-009, ADR-010, ADR-011, and the natural-language trace portion of ADR-020. The dashboard and recommendation engine remain deterministic and independent.
+
+**Context.** The assignment explicitly requires a CSV/Pandas Data Agent in which the LLM writes code that executes locally. The former typed intent router could answer only a fixed catalog and could silently discard filters when an unsupported question fell into a broad fallback metric.
+
+**Decision.** `openai/gpt-oss-120b` receives the question, bounded conversation history, metric definitions, table relationships, and schema metadata for the active session. It returns strict JSON containing a short Pandas program against only `students`, `courses`, `enrollments`, and `grades`. Full dataframe rows are not included in the code-generation prompt. The program must assign `result`; an AST validator rejects imports, file/process/network primitives, dunder access, source-frame mutation, unsafe I/O, and unknown names. A separate scope checker verifies exact module codes, presentations, learner IDs, outcomes, requested counts, rate semantics, and ranking direction. Accepted code runs in a fresh `multiprocessing.get_context("spawn")` child with copied frames, restricted builtins, cleared environment, bounded output, and a five-second wall-clock timeout. One repair attempt is allowed. `openai/gpt-oss-20b` then phrases only the normalized result. The API never exposes generated code, prompts, hidden reasoning, or raw exceptions.
+
+**Why.** This satisfies the assignment's core requirement and removes the fixed intent ceiling while preserving an explicit trust boundary between model output and executable work. The larger model is used only for the difficult code-generation step; the smaller model handles inexpensive answer formatting.
+
+**How it helped.** Coverage can extend to compound filters, groupings, rates, comparisons, learner lookups, and conversational follow-ups without adding a handwritten executor for each paraphrase. The response still includes bounded evidence rows and an execution-mode label, so a fluent answer is not the sole artifact users must trust.
+
+**Trade-offs and limitations.** Two provider round trips increase latency and cost, with a third code-generation call on repair. Scope preservation uses deterministic heuristics rather than formal semantic equivalence, so tests and evaluation questions remain essential. Clearing `os.environ` occurs after a spawned interpreter starts and is defense in depth, not OS-level container isolation. POSIX resource limits are unavailable on Windows, where termination relies on the wall-clock timeout. The workflow and Groq client are still constructed per request.
+
+**Alternatives.** LangChain could orchestrate the same stages but would duplicate the selected workflow abstraction. Text-to-SQL becomes preferable after adopting a governed warehouse, read-only roles, a semantic layer, query parsing, and row-level authorization. DuckDB is a credible execution engine when data no longer fits comfortably in Pandas. Prewritten executors remain the fallback for no-key/provider-failure operation, but cannot satisfy the assignment as the primary query architecture.
+
+**Revisit when.** Revisit the validator or scope rules if evaluation finds false rejection or silent scope loss. Do not relax the local execution boundary. Introduce stronger OS/container isolation before using this feature with production institutional data.
+
+**Reference.** `backend/app/pandas_code_validation.py`, `backend/app/pandas_worker.py`, `backend/app/scope_validation.py`, `backend/app/data_agent.py`, and `backend/app/ai_workflow.py`.
+
 ## 5. Alternatives and when they become better choices
 
 | Alternative | Why it is not the current choice | When it becomes preferable |
@@ -444,7 +465,7 @@ Groq may rerank only the already-eligible top candidate set and write a one-sent
 | LangChain/LangGraph agents | Too much autonomy and duplicated orchestration for three bounded capabilities | Many tools, durable agent state, approval steps, or complex branching |
 | Direct Groq SDK only | Loses the chosen data-retrieval abstraction and future catalog extension | Capability catalog stays tiny and LlamaIndex adds no measurable value |
 | Vector database | Extra cost and operations for a three-node metadata catalog | Dozens of heterogeneous schemas/documents and BM25 recall is inadequate |
-| Generated Text-to-Pandas | Requires evaluating model-produced expressions | Not recommended for this trust context |
+| Prewritten Pandas executor catalog | Deterministic but fails the assignment's data-agent requirement and caps question coverage | No-key fallback, tightly regulated metrics, or dashboards |
 | Open-ended Text-to-SQL | No database is needed today; unrestricted SQL adds safety and cost risks | Governed warehouse, read-only role, semantic model, parser, limits, and audit |
 | DuckDB | Additional engine is unnecessary at current data size | Larger CSV/Parquet analytics that exceed comfortable Pandas performance |
 | Polars | Migration cost without a measured bottleneck | Profiling shows DataFrame execution is the dominant latency or memory cost |
@@ -453,7 +474,9 @@ Groq may rerank only the already-eligible top candidate set and write a one-sent
 | Postgres from day one | Operational overhead for an intentionally ephemeral demo | Accounts, durable datasets, audit history, permissions, and multi-instance use |
 | Separate frontend/API services | More deployment and CORS complexity | Independent scaling, CDN delivery, or organization-level service ownership |
 
-## 6. Evidence from the initial natural-language evaluation
+## 6. Historical evidence from the initial natural-language evaluation
+
+This section records the 2026-08-11 fixed-router build that motivated ADR-025; it does not describe the current data-agent query path.
 
 Production testing on 2026-08-11 produced the following result:
 
@@ -530,7 +553,7 @@ The discovered gaps have now produced concrete changes: scoped learner-profile a
 3. Introduce read-only governed SQL only alongside a semantic layer, query parser, row-level access control, statement timeout, row limit, and audit logging.
 4. Consider trained recommendation models only after obtaining appropriate historical data, outcome definitions, consent/governance, fairness evaluation, calibration, and drift monitoring.
 
-### ADR-018 - Replace fictional course planning with course-specific OULAD evidence
+### ADR-026 - Replace fictional course planning with course-specific OULAD evidence
 
 **Status.** Accepted on 2026-08-11. This supersedes the fictional-catalog portion of ADR-006 and the original recommendation-scoring policy in ADR-009.
 
@@ -540,32 +563,30 @@ The discovered gaps have now produced concrete changes: scoped learner-profile a
 
 **Uncertainty behavior.** Evidence strength is based on the number of graded learner records. Zero or one graded record is `Limited`; two or three is `Moderate`; four or more is `Strong`. Limited-evidence explanations state that the estimate relies mainly on historical module outcomes. Every card exposes module pass rate, withdrawal rate, average grade, record count, and the basis of the estimate.
 
-**Product-language decision.** `OULAD Lite` is renamed in the UI to `OULAD (curated 750-learner cohort)`. `Presentation` is shown as `Term (OULAD presentation)`, with `B` explained as February and `J` as October. Learner risk is labeled `academic-support priority` so it is not confused with course suitability. The calculation trace remains available behind an optional `How this was calculated` disclosure.
+**Product-language decision.** `OULAD Lite` is renamed in the UI to `OULAD (curated 750-learner cohort)`. `Presentation` is shown as `Term (OULAD presentation)`, with `B` explained as February and `J` as October. Learner risk is labeled `academic-support priority` so it is not confused with course suitability. Natural-language results show bounded evidence and a short execution-mode status rather than generated code or a calculation-trace disclosure.
 
 **Known boundary.** OULAD does not provide future availability, official module titles, prerequisites, degree requirements, or instructor information. The engine therefore recommends historical module fit, not guaranteed enrollment eligibility. A real institution should replace this boundary with its catalog and degree-audit systems.
 
-**Why guardrails remain.** The product no longer leads with adversarial or “safe catalog” wording. Unsupported questions are answered as missing-data or undefined-metric cases. Structural controls still prevent generated code and unsupported calculations because they protect correctness, not because administrators are presumed malicious.
+**Why guardrails remain.** The product no longer leads with adversarial or “safe catalog” wording. Unsupported questions are answered as missing-data or undefined-metric cases. Structural controls validate generated code and isolate its execution because they protect correctness and the application boundary, not because administrators are presumed malicious.
 
-## 8. Recommended target architecture after P0 and P1
+## 8. Current natural-language analytics architecture
 
 ```mermaid
 flowchart TD
-    Q["User question"] --> RET["Retrieve capability metadata"]
-    RET --> PLAN["Groq strict AnalyticsPlan"]
-    PLAN --> SEM["Semantic scope validator"]
-    SEM -->|"metric/group/risk"| AX["Analytics executor registry"]
-    SEM -->|"student_profile"| SP["Student profile service"]
-    SEM -->|"student_recommendation"| RS["Recommendation service"]
-    SEM -->|"unsupported"| UNS["Data-availability response"]
-    SEM -->|"provider unavailable"| FB["Scope-aware deterministic fallback"]
-    AX --> RESP["Evidence response"]
-    SP --> RESP
-    RS --> RESP
+    Q["User question + bounded history"] --> SC["Schema context + deterministic scope extraction"]
+    SC -->|"missing field"| UNS["Data-availability response"]
+    SC --> GEN["Groq 120B strict generated-program JSON"]
+    GEN --> VAL["AST validation + scope preservation"]
+    VAL -->|"one repair allowed"| GEN
+    VAL --> EXEC["Spawned local Pandas worker"]
+    EXEC --> NORM["Bounded normalized evidence"]
+    NORM --> SYN["Groq 20B answer synthesis"]
+    SYN --> RESP["Answer + evidence + execution mode"]
+    Q -->|"no provider"| FB["Scope-aware deterministic fallback"]
     FB --> RESP
-    RESP --> TRACE["Plan, metric definition, rows, dataset version, timing"]
 ```
 
-The critical addition is the semantic scope validator. JSON Schema can ensure that a plan is structurally valid, but it cannot by itself prove that the plan preserved “Learner 242636” rather than silently answering for the full cohort.
+JSON Schema validates the model's response shape; it does not prove calculation correctness. The independent AST validator, scope checker, isolated execution boundary, evidence rows, and evaluation corpus together reduce the chance that a well-formed but wrongly scoped program is accepted.
 
 ## 9. Decision-review checklist
 
@@ -599,8 +620,8 @@ For every change, record the decision, evidence, alternatives, consequences, mig
 
 ## 11. Final assessment
 
-The current architecture is strong for an evidence-first public demonstration. Its most important choices—bounded AI, deterministic Pandas calculations, transparent recommendation rules, canonical data, provenance, and graceful degradation—have already improved correctness and diagnosability.
+The current architecture is strong for an assignment-aligned public demonstration. Its most important choices—bounded generated Pandas, structural and semantic validation, isolated local execution, transparent recommendation rules, canonical data, provenance, and graceful degradation—improve coverage without making the model's prose authoritative.
 
-The application does **not** need a more autonomous agent, generated code, or a vector database next. Its learner-and-module baseline now needs calibration analysis, broader typed intent coverage, educator review, and shared durable infrastructure only when usage and data sensitivity require it.
+The application does **not** need a more autonomous loop or a vector database next. It needs live-model evaluation across a larger question corpus, stronger semantic verification of generated calculations, calibration analysis for recommendations, educator review, and shared durable infrastructure only when usage and data sensitivity require it.
 
-The immediate goal is therefore not “more AI.” It is to make every supported answer correctly scoped, fully evidenced, and impossible to confuse with a broader cohort result.
+The immediate goal is to make every answer correctly scoped, fully evidenced, and impossible to confuse with a broader cohort result—even when the generated program is syntactically valid.

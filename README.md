@@ -13,7 +13,7 @@ The recommendation engine ranks only authentic OULAD module codes. It combines e
 ## Enhanced assignment coverage
 
 - Dashboard filters and clickable drill-downs cover module, presentation, and outcome, with an outcome donut visualization.
-- The analytics copilot keeps bounded conversation history, plans against a typed capability catalog, executes only approved Pandas operations, and asks Groq to phrase verified results naturally.
+- The analytics copilot keeps bounded conversation history, asks GPT-OSS 120B to write Pandas against the four canonical dataframes, validates the program structurally and semantically, executes it in an isolated local process, and asks GPT-OSS 20B to phrase only the computed result.
 - Assignment-level questions for distinctions and learners failing multiple courses are supported, along with scoped learner profiles and recommendation questions.
 - CSV imports include an AI-assisted header-mapping review step. Only filenames and headers are sent for mapping; users must confirm before deterministic validation and atomic activation.
 - Recommendation eligibility remains deterministic. Groq may rerank only the already-eligible top candidate set through a strict schema, and the UI reports whether hybrid reranking succeeded.
@@ -47,15 +47,15 @@ The reproducible canonical cohort is stored in `backend/data/processed` with its
 
 ## AI workflow behavior
 
-With `GROQ_API_KEY`, a bounded LlamaIndex Workflow retrieves relevant analytics capabilities with BM25 and asks Groq for a strict, schema-validated `AnalyticsPlan`. The plan can select only allowlisted Pandas executors; it cannot contain Python, SQL, expressions, column names, or function references. A second bounded call may turn the verified result into a conversational answer, but cannot add unsupported values. The result includes an audit trace.
+With `GROQ_API_KEY`, a bounded LlamaIndex Workflow sends schema metadata—not full dataframe rows—to `openai/gpt-oss-120b`. The model returns a strict, schema-validated Pandas program for the active session's `students`, `courses`, `enrollments`, and `grades` dataframes. The service performs AST validation and deterministic scope checks, runs accepted code locally in a short-lived `multiprocessing` child with a five-second timeout, and normalizes the result to a bounded evidence payload. `openai/gpt-oss-20b` then turns that verified payload into a concise answer. One repair attempt is permitted; there is no open-ended agent loop. Generated code, prompts, and raw exceptions are never returned to the browser.
 
-Without the key—or when the live planner times out or fails validation—the dashboard, deterministic rankings, and verified fallback metrics continue to work.
+Without the key—or when the live agent is unavailable—the dashboard, deterministic recommendations, and a limited deterministic analytics fallback continue to work. Query responses identify generated Pandas, repaired generated Pandas, deterministic fallback, or unsupported execution. The UI shows only a short provenance status, not generated code or hidden reasoning.
 
 ## Importing another dataset
 
 Open **Import data** in the application and select the four canonical CSV files together. Downloadable starter templates are provided in the wizard. The service validates file size, required columns, numeric ranges, primary keys, and cross-table foreign keys before issuing a ten-minute preview token. Activating the token swaps all four tables atomically for that browser session.
 
-Uploaded data is held only in server memory, expires after 30 minutes of inactivity, and is isolated by an opaque HTTP-only session cookie. It is never included in the Groq planning prompt. Resetting returns only that browser session to the bundled curated OULAD cohort.
+Uploaded data is held only in server memory, expires after 30 minutes of inactivity, and is isolated by an opaque HTTP-only session cookie. The data agent sends Groq only schema metadata, bounded categorical examples, row counts, and metric definitions—not full uploaded rows. Resetting returns only that browser session to the bundled curated OULAD cohort.
 
 ## Deployment controls
 
