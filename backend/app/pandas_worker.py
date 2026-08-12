@@ -200,18 +200,39 @@ def run_pandas_code(
     frame_copies = {name: frame.copy(deep=True) for name, frame in frames.items()}
     process = ctx.Process(target=_worker_entry, args=(code, frame_copies, result_queue), daemon=True)
     process.start()
-    process.join(timeout)
+    # Read from the queue BEFORE joining the process - do not call `process.join(timeout)`
+    # first. `multiprocessing.Queue.put()` writes through a background feeder thread onto an
+    # OS pipe with a bounded buffer; if the parent joins first and the payload is larger than
+    # that buffer (this bit for real during Task 3's own fix-round testing: a 100-row,
+    # ~500KB result reproducibly hung for minutes on this machine), the child blocks writing
+    # to a pipe nobody is draining yet while the parent blocks waiting for the child to exit -
+    # a classic multiprocessing deadlock, only bounded by the outer timeout escalating to
+    # terminate()/kill() and then reporting a false "timeout" for work that had actually
+    # already completed. Reading first drains the pipe as data arrives and also serves as the
+    # wait-for-completion step, so the deadlock cannot occur.
+    try:
+        status, payload = result_queue.get(timeout=timeout)
+    except Empty:
+        # Distinguish "still running past the deadline" (a real timeout - kill it) from
+        # "already exited without ever queueing a result" (e.g. an interpreter crash or an
+        # uncaught BaseException that bypassed _worker_entry's own exception handling) - both
+        # raise Empty here, but only the first is actually a timeout.
+        if process.is_alive():
+            process.terminate()
+            process.join(1)
+            if process.is_alive():
+                process.kill()
+                process.join(1)
+            return WorkerExecutionResult(status="timeout", error="Execution exceeded the time limit")
+        process.join(1)
+        return WorkerExecutionResult(status="error", error="Worker process exited without a result")
+    process.join(1)
     if process.is_alive():
         process.terminate()
         process.join(1)
         if process.is_alive():
             process.kill()
             process.join(1)
-        return WorkerExecutionResult(status="timeout", error="Execution exceeded the time limit")
-    try:
-        status, payload = result_queue.get(timeout=1)
-    except Empty:
-        return WorkerExecutionResult(status="error", error="Worker process exited without a result")
     if status == "error":
         return WorkerExecutionResult(status="error", error=str(payload))
     return WorkerExecutionResult(
