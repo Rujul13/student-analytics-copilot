@@ -1551,7 +1551,16 @@ def build_schema_context(context: DatasetContext) -> dict[str, Any]:
         columns = []
         for column in frame.columns:
             entry: dict[str, Any] = {"name": column, "dtype": str(frame[column].dtype)}
-            if column in _ALWAYS_CATEGORICAL or frame[column].dtype == object:
+            # Deliberately a whitelist, not `column in _ALWAYS_CATEGORICAL or dtype == object`:
+            # the `or dtype == object` form would also match identifier columns such as
+            # `students.student_id`, `students.display_name`, and especially
+            # `enrollments.enrollment_id` (constructed as student_id + course_code +
+            # presentation - see oulad.py) - leaking real row-level identifiers into the
+            # "bounded categorical examples" sent to Groq, which is exactly what "do not send
+            # full dataframe rows" is meant to prevent. The trade-off is that a legitimately
+            # low-cardinality column outside this fixed list (e.g. `courses.level`) won't get
+            # example values either - conservative on purpose.
+            if column in _ALWAYS_CATEGORICAL:
                 values = sorted(map(str, frame[column].dropna().unique()))[:MAX_CATEGORICAL_EXAMPLES]
                 entry["example_values"] = values
             columns.append(entry)
