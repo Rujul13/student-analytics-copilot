@@ -275,7 +275,7 @@ function Recommendations({ students, initialRisk }: { students: Student[]; initi
         </div>}
         {!result && <Loading />}
         {result && <>
-          <div className="mode-note"><Database size={16} /><span><strong>Historical-performance recommendation</strong> · {result.catalog_label} · {result.ranking_mode === "hybrid-llm" ? "AI reranked the verified candidates" : "verified deterministic ranking"}</span></div>
+          <div className="mode-note"><Database size={16} /><span><strong>{result.capability_mode === "graduation-aware" ? "Graduation-aware recommendation" : "Historical-performance recommendation"}</strong> · {result.catalog_label} · {result.selection_summary}</span></div>
           {result.success_model && <div className="model-evaluation"><TrendingUp size={16} /><span><strong>Evaluated success baseline</strong><small>{result.success_model.model_name} · held-out n={result.success_model.test_records} · accuracy {(result.success_model.accuracy * 100).toFixed(1)}% · ROC AUC {result.success_model.roc_auc.toFixed(3)} · Brier {result.success_model.brier_score.toFixed(3)}</small></span></div>}
           <div className="recommendation-grid">
             {result.recommendations.map((item, index) => <article className="recommendation-card" key={item.course_code}>
@@ -341,22 +341,22 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
     <div className="import-status">
       <div><Database size={19} /><span><small>Active dataset</small><strong>{dataset?.name ?? "Loading"}</strong></span></div>
       <div><span><small>Session boundary</small><strong>Private · expires after 30 minutes</strong></span></div>
-      <button onClick={() => void reset()} disabled={busy || dataset?.mode.startsWith("canonical")}><RotateCcw size={15} /> Reset to OULAD</button>
+      <button onClick={() => void reset()} disabled={busy || !dataset?.mode.startsWith("uploaded")}><RotateCcw size={15} /> Reset to OULAD</button>
     </div>
     <div className="import-layout">
       <aside className="import-steps panel">
-        {["Select four files", "Validate schema", "Activate atomically"].map((label, index) => {
-          const complete = index === 0 ? files.length === 4 : index === 1 ? Boolean(preview) : activated;
-          const current = index === 0 ? files.length !== 4 : index === 1 ? files.length === 4 && !preview : Boolean(preview) && !activated;
+        {["Select 1–8 files", "Normalize & validate", "Activate atomically"].map((label, index) => {
+          const complete = index === 0 ? files.length > 0 : index === 1 ? Boolean(preview) : activated;
+          const current = index === 0 ? files.length === 0 : index === 1 ? files.length > 0 && !preview : Boolean(preview) && !activated;
           return <div className={`${complete ? "complete" : ""} ${current ? "current" : ""}`} key={label}><span>{complete ? <FileCheck2 size={16} /> : index + 1}</span><div><strong>{label}</strong><small>{index === 0 ? "Canonical CSV tables" : index === 1 ? "Keys, types, and relationships" : "No partial replacements"}</small></div></div>;
         })}
       </aside>
       <div className="import-workspace panel">
         <label className="drop-zone">
-          <input type="file" accept=".csv,text/csv" multiple onChange={(event) => { setFiles(Array.from(event.target.files ?? []).slice(0, 4)); setMapping(null); setPreview(null); setActivated(false); setError(null); }} />
+          <input type="file" accept=".csv,text/csv" multiple onChange={(event) => { setFiles(Array.from(event.target.files ?? []).slice(0, 8)); setMapping(null); setPreview(null); setActivated(false); setError(null); }} />
           <div className="upload-icon"><UploadCloud size={28} /></div>
-          <h2>Choose four canonical CSV files</h2>
-          <p>students, courses, enrollments, and grades · 5 MB per file</p>
+          <h2>Choose one or more academic CSV files</h2>
+          <p>Flat history, partial package, or four canonical tables · up to 8 files</p>
           <span>Browse files</span>
         </label>
         <div className="role-grid">
@@ -369,7 +369,7 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
         {error && <div className="error-banner"><CircleAlert size={19} />{error}</div>}
         {preview?.warnings.map((warning) => <div className="warning-banner" key={warning}><CircleAlert size={18} />{warning}</div>)}
         {mapping && <div className="mapping-review">
-          <div className="mapping-head"><div><Sparkles size={17} /><span><strong>{mapping.ai_used ? "AI-assisted header mapping" : "Deterministic header mapping"}</strong><small>Only filenames and column headers were analyzed. Review before applying.</small></span></div><i>{mapping.safe_to_apply ? "Ready for confirmation" : "Missing required fields"}</i></div>
+          <div className="mapping-head"><div><Sparkles size={17} /><span><strong>{mapping.ai_used ? "AI-assisted normalization plan" : "Deterministic normalization plan"}</strong><small>{mapping.note ?? "Only filenames and column headers were analyzed. Review before applying."}</small></span></div><i>{mapping.safe_to_apply ? "Ready for confirmation" : "Missing academic identity or outcomes"}</i></div>
           {mapping.mappings.map((file) => <div className="mapping-file" key={file.filename}><div><strong>{file.filename}</strong><span>{file.role}</span></div><p>{file.columns.map((column) => `${column.source} → ${column.target}`).join(" · ") || "No confident mappings"}</p>{file.missing.length > 0 && <small>Missing: {file.missing.join(", ")}</small>}</div>)}
         </div>}
         {activated && <div className="success-banner"><FileCheck2 size={19} />Dataset activated for this browser session. Dashboard, Copilot, and recommendations now use version {preview?.dataset_version}.</div>}
@@ -377,9 +377,10 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
           <div className="preview-head"><strong>Validation report</strong><span>{preview.mode}</span></div>
           {preview.files.map((file) => <div key={file.filename}><span>{file.filename}</span><strong>{file.role}</strong><small>{file.rows.toLocaleString()} rows · {file.columns.length} columns</small></div>)}
         </div>}
+        {preview && <div className="capability-report"><strong>Available after activation</strong><span>Dashboard ✓</span><span>Natural-language analytics ✓</span><span>Historical recommendations ✓</span><span>Graduation-aware planning {preview.capabilities.graduation_aware_recommendations ? "✓" : "— needs requirements data"}</span></div>}
         <div className="import-actions">
           <p>{preview ? activated ? "This dataset is active only for the current browser session." : "Preview is valid for 10 minutes. Your active dataset has not changed yet." : <>Uploads remain in memory only and are never sent to Groq. <a href="/api/import/templates">Download starter templates</a></>}</p>
-          {!mapping && !preview && <button className="primary" disabled={busy || files.length !== 4} onClick={() => void analyzeMapping()}>{busy ? "Analyzing…" : "Analyze & map headers"}<Sparkles size={16} /></button>}
+          {!mapping && !preview && <button className="primary" disabled={busy || files.length === 0} onClick={() => void analyzeMapping()}>{busy ? "Analyzing…" : "Analyze & normalize"}<Sparkles size={16} /></button>}
           {mapping && !preview && <button className="primary" disabled={busy || !mapping.safe_to_apply} onClick={() => void inspect()}>{busy ? "Validating…" : "Confirm mapping & validate"}<ArrowRight size={16} /></button>}
           {preview && !activated && <button className="primary" disabled={busy} onClick={() => void activate()}>{busy ? "Activating…" : "Activate dataset"}<ArrowRight size={16} /></button>}
         </div>

@@ -1,0 +1,56 @@
+{
+  "weights": [
+    -0.13845235198934516,
+    -0.034545265529415455,
+    0.20774654287065517,
+    -0.1141454921026823,
+    0.007720115953545451,
+    -0.3735605397755367,
+    -0.43139684600798794,
+    0.5643640283508159,
+    0.0016906059923856144,
+    -0.004224891528088458,
+    -0.021241446564373823,
+    -0.04953892868365269,
+    -0.04423799621673123,
+    0.21830283429229358,
+    -0.03838594547043698,
+    -0.4123583184903544,
+    -0.2426255274010996,
+    0.15099503379609763,
+    -0.022082347843045046,
+    0.27079777542867184
+  ],
+  "module_codes": [
+    "AAA",
+    "BBB",
+    "CCC",
+    "DDD",
+    "EEE",
+    "FFF",
+    "GGG"
+  ],
+  "feature_names": [
+    "prior_average",
+    "prior_success_rate",
+    "prior_withdrawals",
+    "prior_credits",
+    "previous_attempts",
+    "current_study_load",
+    "education_level",
+    "prior_vle_clicks",
+    "prior_vle_active_days",
+    "module_pass_rate",
+    "module_average_grade",
+    "module_withdrawal_rate"
+  ],
+  "evaluation": {
+    "model_name": "Temporal learner-and-module logistic baseline",
+    "training_records": 21333,
+    "test_records": 11260,
+    "accuracy": 0.578,
+    "brier_score": 0.239,
+    "roc_auc": 0.638,
+    "dataset_version": "b19e88a47475"
+  }
+}

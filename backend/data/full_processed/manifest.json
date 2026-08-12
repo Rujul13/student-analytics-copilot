@@ -1,0 +1,24 @@
+{
+  "dataset_name": "OULAD (full academic cohort)",
+  "dataset_version": "b19e88a47475",
+  "selection_policy": "all anonymized learners in the official OULAD core academic tables",
+  "source_archive_sha256": "F2ED1902616C1FE8D2824D872C0B7D2D72BE435BF0124D077044FE4BE2C6D3E4",
+  "source_doi": "10.24432/C5KK69",
+  "license": "CC BY 4.0",
+  "storage": "DuckDB-generated Zstandard-compressed Parquet",
+  "tables": {
+    "students": 28785,
+    "courses": 7,
+    "enrollments": 32593,
+    "grades": 25843
+  },
+  "excluded_runtime_tables": [
+    "studentVle.csv",
+    "vle.csv"
+  ],
+  "offline_features": [
+    "per-history VLE total clicks",
+    "per-history VLE active days"
+  ],
+  "note": "Raw VLE rows are aggregated offline, then excluded from deployment and request-time scans."
+}

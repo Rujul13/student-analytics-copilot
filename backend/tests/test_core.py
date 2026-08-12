@@ -86,7 +86,7 @@ def test_llm_can_only_rerank_the_verified_candidate_set(monkeypatch):
     student = students(dataset)[0]
     response = recommend(dataset, student.student_id, limit=8)
     original_codes = [item.course_code for item in response.recommendations]
-    reversed_codes = list(reversed(original_codes))
+    reversed_codes = list(reversed(original_codes))[:3]
 
     class FakeCompletions:
         async def create(self, **kwargs):
@@ -101,8 +101,25 @@ def test_llm_can_only_rerank_the_verified_candidate_set(monkeypatch):
     ranked = asyncio.run(add_ai_explanations(response, "test-key", "test-model"))
     assert ranked.ranking_mode == "hybrid-llm"
     assert ranked.ai_explanation_enabled is True
-    assert [item.course_code for item in ranked.recommendations] == reversed_codes[:3]
+    assert [item.course_code for item in ranked.recommendations] == reversed_codes
+    assert ranked.evaluated_candidates == len(original_codes)
     assert set(item.course_code for item in ranked.recommendations).issubset(set(original_codes))
+
+
+def test_enriched_upload_enables_verified_graduation_aware_eligibility():
+    dataset = context()
+    learner = students(dataset)[0]
+    frames = {name: frame.copy() for name, frame in dataset.frames.items()}
+    frames["students"].loc[frames["students"]["student_id"].eq(learner.student_id), "program"] = "Applied Computing"
+    frames["courses"] = pd.DataFrame([
+        {"course_code": "NEXT-CORE", "course_name": "Capstone", "department": "Computing", "level": 3, "credits": 30, "offered_next_term": True, "prerequisites": "", "programs": "Applied Computing", "requirement_type": "core"},
+        {"course_code": "WRONG-PROGRAM", "course_name": "Finance", "department": "Business", "level": 3, "credits": 30, "offered_next_term": True, "prerequisites": "", "programs": "Finance", "requirement_type": "core"},
+    ])
+    uploaded = DatasetContext("Uploaded", "enriched-test", "uploaded-enriched", frames)
+    result = recommend(uploaded, learner.student_id)
+    assert result.capability_mode == "graduation-aware"
+    assert [item.course_code for item in result.recommendations] == ["NEXT-CORE"]
+    assert "Graduation contribution" in result.recommendations[0].reasons[0]
 
 
 def test_query_catalog_does_not_execute_generated_code():

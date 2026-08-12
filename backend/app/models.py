@@ -81,6 +81,8 @@ class RecommendationResponse(BaseModel):
     ai_explanation_enabled: bool
     catalog_label: str
     ranking_mode: Literal["deterministic", "hybrid-llm"] = "deterministic"
+    evaluated_candidates: int = 0
+    selection_summary: str = ""
     success_model: SuccessModelSummary | None = None
 
 

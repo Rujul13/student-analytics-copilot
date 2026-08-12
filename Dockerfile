@@ -14,6 +14,7 @@ COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
 COPY backend/data/processed ./data/processed
+COPY backend/data/full_processed ./data/full_processed
 COPY backend/data/catalog ./data/catalog
 COPY backend/data/OULAD_ATTRIBUTION.md ./data/OULAD_ATTRIBUTION.md
 COPY --from=frontend /frontend/dist ./static

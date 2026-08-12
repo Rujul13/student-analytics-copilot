@@ -13,10 +13,12 @@ from groq import AsyncGroq
 from pydantic import BaseModel, ConfigDict
 
 from .repository import DatasetContext
+from .oulad import REQUIRED_FILES as OULAD_REQUIRED_FILES, transform_oulad_dataframes
+from .analytical_store import stage_csv_frames
 
 
-MAX_FILE_BYTES = 5 * 1024 * 1024
-MAX_TOTAL_BYTES = 15 * 1024 * 1024
+MAX_FILE_BYTES = 10 * 1024 * 1024
+MAX_TOTAL_BYTES = 25 * 1024 * 1024
 ROLE_HEADERS = {
     "students": ["student_id", "display_name", "program"],
     "courses": ["course_code", "course_name", "department", "level", "credits", "offered_next_term", "prerequisites", "programs", "requirement_type"],
@@ -35,7 +37,7 @@ TEMPLATE_ROWS = {
     "enrollments": ["SAMPLE-E1", "SAMPLE-1", "SAMPLE-101", "2026J", "Completed", "Pass", "30"],
     "grades": ["SAMPLE-E1", "82"],
 }
-ROW_LIMITS = {"students": 5000, "courses": 500, "enrollments": 50000, "grades": 200000}
+ROW_LIMITS = {"students": 50000, "courses": 5000, "enrollments": 100000, "grades": 250000}
 
 HEADER_ALIASES = {
     "students": {
@@ -113,8 +115,8 @@ def _detect_role(columns: set[str]) -> tuple[str | None, list[str]]:
 
 
 async def parse_uploads(files: list[UploadFile]) -> list[ParsedUpload]:
-    if not 1 <= len(files) <= 4:
-        raise ImportValidationError("Upload exactly four canonical CSV files")
+    if not 1 <= len(files) <= 8:
+        raise ImportValidationError("Upload between one and eight CSV files")
     parsed: list[ParsedUpload] = []
     total_bytes = 0
     for upload in files:
@@ -170,7 +172,62 @@ def _mapping_payload(bundle: MappingBundle, parsed: list[ParsedUpload], ai_used:
         })
     unique_roles = len({item["role"] for item in mappings}) == len(mappings)
     safe = len(mappings) == 4 and unique_roles and not any(item["missing"] for item in mappings)
-    return {"mappings": mappings, "ai_used": ai_used, "safe_to_apply": safe}
+    if not safe:
+        flexible = _flexible_profile(parsed)
+        if flexible["safe_to_apply"]:
+            return flexible | {"ai_used": ai_used}
+    return {"mappings": mappings, "ai_used": ai_used, "safe_to_apply": safe, "ingestion_mode": "canonical"}
+
+
+def _global_aliases(frame: pd.DataFrame) -> pd.DataFrame:
+    """Apply unambiguous academic aliases without assigning the file a single role."""
+    renamed = frame.copy()
+    targets: dict[str, str] = {}
+    for source in map(str, renamed.columns):
+        key = _header_key(source)
+        matches = {
+            target
+            for aliases in HEADER_ALIASES.values()
+            for target, candidates in aliases.items()
+            if key in {_header_key(value) for value in candidates}
+        }
+        # Shared identifiers resolve to the same target. Ambiguous generic fields
+        # such as "program" or "credits" already have their canonical spelling.
+        if len(matches) == 1:
+            targets[source] = next(iter(matches))
+        elif key in {"program", "credits"}:
+            targets[source] = key
+    return renamed.rename(columns=targets)
+
+
+def _flexible_profile(parsed: list[ParsedUpload]) -> dict:
+    profiled = [_global_aliases(item.frame) for item in parsed]
+    enrollment_index = max(
+        range(len(profiled)),
+        key=lambda index: len({"student_id", "course_code", "final_result", "weighted_grade"} & set(profiled[index].columns)),
+    )
+    enrollment = profiled[enrollment_index]
+    has_identity = {"student_id", "course_code"}.issubset(enrollment.columns)
+    has_outcome = "final_result" in enrollment.columns or "weighted_grade" in enrollment.columns
+    mappings = []
+    for item, frame in zip(parsed, profiled):
+        columns = [
+            {"source": str(source), "target": str(target)}
+            for source, target in zip(item.frame.columns, frame.columns)
+            if str(source) != str(target)
+        ]
+        mappings.append({
+            "filename": item.filename,
+            "role": "flat_academic_history" if item is parsed[enrollment_index] else (item.role or "supporting_table"),
+            "columns": columns,
+            "missing": sorted(({"student_id", "course_code"} - set(frame.columns)) if item is parsed[enrollment_index] else set()),
+        })
+    return {
+        "mappings": mappings,
+        "safe_to_apply": bool(has_identity and has_outcome),
+        "ingestion_mode": "flexible",
+        "note": "Files will be normalized into students, courses, enrollments, and grades before activation.",
+    }
 
 
 async def suggest_upload_mappings(parsed: list[ParsedUpload], api_key: str | None, model: str) -> dict:
@@ -213,6 +270,8 @@ def apply_upload_mappings(parsed: list[ParsedUpload], mapping_json: str | None) 
     if not mapping_json:
         return parsed
     raw = json.loads(mapping_json)
+    if raw.get("ingestion_mode") == "flexible":
+        return parsed
     bundle = MappingBundle.model_validate({
         "mappings": [
             {key: value for key, value in item.items() if key in {"filename", "role", "columns"}}
@@ -237,6 +296,83 @@ def apply_upload_mappings(parsed: list[ParsedUpload], mapping_json: str | None) 
     return result
 
 
+def _flexible_frames(parsed: list[ParsedUpload]) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    frames = [_global_aliases(item.frame) for item in parsed]
+    staging = stage_csv_frames(frames)
+    try:
+        frames = [staging.execute(f"SELECT * FROM upload_{index}").fetchdf() for index in range(len(frames))]
+    finally:
+        staging.close()
+    by_role = {item.role: frame for item, frame in zip(parsed, frames) if item.role}
+    warnings = ["Input files were normalized into the four canonical academic tables."]
+
+    enrollment = by_role.get("enrollments")
+    if enrollment is None:
+        enrollment = max(
+            frames,
+            key=lambda frame: len({"student_id", "course_code", "final_result", "weighted_grade", "presentation"} & set(frame.columns)),
+        ).copy()
+    else:
+        enrollment = enrollment.copy()
+    if not {"student_id", "course_code"}.issubset(enrollment.columns):
+        raise ImportValidationError("The uploaded data needs student and course identifiers to construct academic history")
+
+    separate_grades = by_role.get("grades")
+    if "enrollment_id" not in enrollment.columns:
+        enrollment["enrollment_id"] = [f"IMPORT-E{index + 1}" for index in range(len(enrollment))]
+        warnings.append("Enrollment IDs were generated from row order.")
+    if enrollment["enrollment_id"].duplicated().any():
+        raise ImportValidationError("The academic-history rows do not produce unique enrollment IDs")
+
+    if "weighted_grade" not in enrollment.columns and separate_grades is not None:
+        enrollment = enrollment.merge(separate_grades[["enrollment_id", "weighted_grade"]], on="enrollment_id", how="left")
+    if "final_result" not in enrollment.columns:
+        if "weighted_grade" not in enrollment.columns:
+            raise ImportValidationError("Academic history needs either final_result or a numeric grade column")
+        numeric = pd.to_numeric(enrollment["weighted_grade"], errors="coerce")
+        enrollment["final_result"] = pd.cut(
+            numeric,
+            bins=[-float("inf"), 39.999, 84.999, float("inf")],
+            labels=["Fail", "Pass", "Distinction"],
+        ).astype("object")
+        warnings.append("Final outcomes were derived from grades: below 40 Fail, 40–84.9 Pass, and 85+ Distinction.")
+    if "weighted_grade" not in enrollment.columns:
+        raise ImportValidationError("A numeric grade column is required for analytics and success recommendations")
+
+    enrollment["presentation"] = enrollment.get("presentation", "Uploaded")
+    enrollment["status"] = enrollment.get("status", enrollment["final_result"].map(lambda value: "Withdrawn" if value == "Withdrawn" else "Completed"))
+
+    course_source = by_role.get("courses")
+    if course_source is None:
+        course_columns = [column for column in ROLE_HEADERS["courses"] if column in enrollment.columns]
+        course_source = enrollment[["course_code", *[column for column in course_columns if column != "course_code"]]].drop_duplicates("course_code")
+        warnings.append("The course lookup table was derived from academic-history rows.")
+    courses = course_source.copy().drop_duplicates("course_code")
+    course_defaults = {"course_name": None, "department": "Not provided", "level": 0, "credits": 0, "offered_next_term": False}
+    for column, default in course_defaults.items():
+        if column not in courses.columns:
+            courses[column] = courses["course_code"].astype(str).map(lambda code: f"Course {code}") if column == "course_name" else default
+
+    student_source = by_role.get("students")
+    if student_source is None:
+        student_columns = [column for column in ROLE_HEADERS["students"] if column in enrollment.columns]
+        student_source = enrollment[["student_id", *[column for column in student_columns if column != "student_id"]]].drop_duplicates("student_id")
+        warnings.append("The student lookup table was derived from academic-history rows.")
+    students = student_source.copy().drop_duplicates("student_id")
+    if "display_name" not in students.columns:
+        students["display_name"] = students["student_id"].astype(str).map(lambda value: f"Learner {value}")
+    if "program" not in students.columns:
+        students["program"] = "Not provided"
+
+    course_credits = courses.set_index("course_code")["credits"]
+    if "credits" not in enrollment.columns:
+        attempted = enrollment["course_code"].map(course_credits).fillna(0)
+        enrollment["credits"] = attempted.where(enrollment["final_result"].isin(["Pass", "Distinction"]), 0)
+    grades = enrollment[["enrollment_id", "weighted_grade"]].dropna(subset=["weighted_grade"]).copy()
+    canonical_enrollments = enrollment[["enrollment_id", "student_id", "course_code", "presentation", "status", "final_result", "credits"]].copy()
+    return {"students": students, "courses": courses, "enrollments": canonical_enrollments, "grades": grades}, warnings
+
+
 def _normalize(frames: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame], bool]:
     normalized = {name: frame.copy() for name, frame in frames.items()}
     for frame in normalized.values():
@@ -250,6 +386,11 @@ def _normalize(frames: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame]
 
     enrichment_columns = {"prerequisites", "programs", "requirement_type"}
     enriched = enrichment_columns.issubset(normalized["courses"].columns)
+    if enriched:
+        enriched = bool(
+            normalized["courses"]["programs"].fillna("").astype(str).str.strip().ne("").any()
+            and normalized["courses"]["requirement_type"].fillna("").astype(str).str.strip().ne("").any()
+        )
     defaults = {
         "prerequisites": "",
         "programs": "",
@@ -264,13 +405,33 @@ def _normalize(frames: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame]
 
 
 def validate_and_build(parsed: list[ParsedUpload]) -> tuple[DatasetContext, list[str]]:
+    uploaded_by_name = {item.filename: item.frame for item in parsed}
+    if OULAD_REQUIRED_FILES.issubset(uploaded_by_name):
+        raw_frames = transform_oulad_dataframes(
+            uploaded_by_name["studentInfo.csv"],
+            uploaded_by_name["studentRegistration.csv"],
+            uploaded_by_name["courses.csv"],
+            uploaded_by_name["assessments.csv"],
+            uploaded_by_name["studentAssessment.csv"],
+            limit_students=None,
+        )
+        roles = []
+        missing_roles = []
+        flexible_warnings = ["The official OULAD package was recognized and normalized into the four canonical tables."]
+    else:
+        raw_frames = None
     roles = [item.role for item in parsed if item.role]
     if len(set(roles)) != len(roles):
         raise ImportValidationError("Two files were detected as the same canonical table")
     missing_roles = sorted(set(ROLE_COLUMNS) - set(roles))
-    if missing_roles:
-        raise ImportValidationError(f"Missing canonical tables: {', '.join(missing_roles)}")
-    frames, enriched = _normalize({item.role: item.frame for item in parsed if item.role})
+    flexible_warnings = flexible_warnings if raw_frames is not None else []
+    if raw_frames is not None:
+        pass
+    elif missing_roles:
+        raw_frames, flexible_warnings = _flexible_frames(parsed)
+    else:
+        raw_frames = {item.role: item.frame for item in parsed if item.role}
+    frames, enriched = _normalize(raw_frames)
 
     for role, frame in frames.items():
         if len(frame) == 0:
@@ -298,7 +459,7 @@ def validate_and_build(parsed: list[ParsedUpload]) -> tuple[DatasetContext, list
         digest.update(pd.util.hash_pandas_object(frames[role], index=True).values.tobytes())
     version = digest.hexdigest()[:12]
     mode = "uploaded-enriched" if enriched else "uploaded-canonical"
-    warnings = [] if enriched else ["No prerequisite/program enrichment was detected; recommendations will use performance-only mode."]
+    warnings = flexible_warnings + ([] if enriched else ["No prerequisite/program enrichment was detected; recommendations will use historical-performance mode."])
     return DatasetContext("Uploaded Canonical Dataset", version, mode, frames), warnings
 
 
@@ -310,10 +471,16 @@ def preview_payload(parsed: list[ParsedUpload], token: str, context: DatasetCont
         "dataset_version": context.version,
         "mode": context.mode,
         "warnings": warnings,
+        "capabilities": {
+            "dashboard": True,
+            "natural_language_analytics": True,
+            "historical_recommendations": True,
+            "graduation_aware_recommendations": context.mode == "uploaded-enriched",
+        },
         "files": [
             {
                 "filename": item.filename,
-                "role": item.role,
+                "role": item.role or "source",
                 "rows": len(item.frame),
                 "columns": list(item.frame.columns),
                 "missing": item.missing,

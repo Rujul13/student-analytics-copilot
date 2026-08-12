@@ -624,4 +624,40 @@ The current architecture is strong for an assignment-aligned public demonstratio
 
 The application does **not** need a more autonomous loop or a vector database next. It needs live-model evaluation across a larger question corpus, stronger semantic verification of generated calculations, calibration analysis for recommendations, educator review, and shared durable infrastructure only when usage and data sensitivity require it.
 
+### ADR-027 - Use full OULAD through a DuckDB/Parquet analytical layer
+
+**Status.** Accepted on 2026-08-12. Supersedes the curated-cohort default in ADR-003.
+
+**Decision.** Build a deployable feature store from the complete official OULAD academic cohort: 28,785 anonymized learners, 32,593 enrollments, and 25,843 graded module histories. DuckDB aggregates the 10.6-million-row VLE clickstream offline and writes Zstandard-compressed Parquet. Runtime startup reads the compact canonical tables through DuckDB and continues to expose Pandas DataFrames to the CSV/Pandas agent.
+
+**Why.** The full cohort strengthens model training and evidence coverage, while Parquet avoids loading or shipping the 432 MB raw clickstream. The database remains embedded and analytical, which fits a single-service assignment deployment better than adding a network database.
+
+**Boundary.** Full OULAD still contains seven anonymized modules and no official degree requirements, prerequisites, module titles, or future offering feed. More rows improve historical-success estimates but do not create graduation awareness.
+
+### ADR-028 - Let AI select three from every verified eligible module
+
+**Status.** Accepted on 2026-08-12. Supersedes the top-three-before-LLM behavior in ADR-026.
+
+**Decision.** Local code evaluates every eligible module, calculates course-specific success and evidence, and sends the complete eligible set to GPT-OSS 120B. The model selects and ranks exactly three. A structured-output validator rejects invented, duplicated, or ineligible course codes. If live selection is unavailable, deterministic scoring returns the top three.
+
+**Why.** OULAD has only seven modules, so a pre-LLM shortlist needlessly prevents a genuine choice. Eligibility and numerical claims remain authoritative local computations while AI performs the multi-factor selection requested by the assignment.
+
+### ADR-029 - Make ingestion flexible while keeping the canonical core strict
+
+**Status.** Accepted on 2026-08-12. Supersedes the exactly-four-files boundary in ADR-017.
+
+**Decision.** Accept one to eight CSV files. Recognize flat academic histories, partial relational packages, four canonical tables, and the five core OULAD tables. Header analysis and source profiling propose normalization; deterministic transformations derive lookup tables and identifiers where meaning is unambiguous. Every accepted dataset is validated and atomically converted into `students`, `courses`, `enrollments`, and `grades` before activation.
+
+**Why.** External education datasets rarely arrive in the application's internal shape. A flexible boundary improves usability without forcing dashboard, query, or recommendation code to handle arbitrary schemas.
+
+**Failure behavior.** Missing labels and identifiers may be derived transparently; academic outcomes or grades are never fabricated silently. The preview reports dashboard, natural-language, historical-recommendation, and graduation-aware capabilities separately.
+
+### ADR-030 - Defer PostgreSQL until durable multi-user state is required
+
+**Status.** Accepted on 2026-08-12.
+
+**Decision.** Use embedded DuckDB for analytical scans, feature construction, Parquet access, and import staging. Retain temporary browser-isolated uploads in memory. Add managed PostgreSQL only when the product needs accounts, durable uploads, shared sessions, audit history, or horizontally scaled API instances.
+
+**Why.** PostgreSQL would not improve the current read-heavy OULAD computations and would add migrations, connections, and another failure domain. Render's free PostgreSQL expires after 30 days, whereas immutable Parquet artifacts deploy with the application.
+
 The immediate goal is to make every answer correctly scoped, fully evidenced, and impossible to confuse with a broader cohort result—even when the generated program is syntactically valid.

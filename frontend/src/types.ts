@@ -66,18 +66,26 @@ export interface ImportPreview {
   dataset_version: string;
   mode: string;
   warnings: string[];
+  capabilities: {
+    dashboard: boolean;
+    natural_language_analytics: boolean;
+    historical_recommendations: boolean;
+    graduation_aware_recommendations: boolean;
+  };
   files: ImportFilePreview[];
 }
 
 export interface ImportMappingSuggestion {
   mappings: {
     filename: string;
-    role: "students" | "courses" | "enrollments" | "grades";
+    role: string;
     columns: { source: string; target: string }[];
     missing: string[];
   }[];
   ai_used: boolean;
   safe_to_apply: boolean;
+  ingestion_mode: "canonical" | "flexible";
+  note?: string;
 }
 
 export interface Student {
@@ -117,6 +125,8 @@ export interface RecommendationResponse {
   ai_explanation_enabled: boolean;
   catalog_label: string;
   ranking_mode: "deterministic" | "hybrid-llm";
+  evaluated_candidates: number;
+  selection_summary: string;
   success_model: {
     model_name: string;
     training_records: number;

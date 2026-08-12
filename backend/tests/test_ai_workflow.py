@@ -59,15 +59,15 @@ async def test_q1_highest_withdrawal_rate(context):
         referenced_tables=["enrollments"],
         referenced_columns=["course_code", "final_result"],
     )
-    client, _ = _queue_client([program], answer="Module AAA has the highest withdrawal rate at 60.0%.")
+    client, _ = _queue_client([program], answer="Module CCC has the highest withdrawal rate at 44.5%.")
     workflow = _workflow(context, client)
     response = await workflow.run(question="Which module has the highest withdrawal rate?", history=[])
     assert response.execution_mode == "generated-pandas"
     assert response.result_type == "table"
     top = response.rows[0]
-    assert top["course_code"] == "AAA"
-    assert top["withdrawal_rate"] == 60.0
-    assert "60.0" in response.answer or "60" in response.answer
+    assert top["course_code"] == "CCC"
+    assert top["withdrawal_rate"] == 44.5
+    assert "44.5" in response.answer
 
 
 @pytest.mark.asyncio
@@ -87,7 +87,7 @@ async def test_q2_average_grade_in_bbb(context):
     response = await workflow.run(question="What is the average grade in module BBB?", history=[])
     assert response.execution_mode == "generated-pandas"
     assert response.result_type == "metric"
-    assert response.rows == [{"value": 66.1}]
+    assert response.rows == [{"value": 69.2}]
 
 
 @pytest.mark.asyncio
@@ -130,8 +130,8 @@ async def test_q4_compare_pass_rate_bbb_two_presentations(context):
     )
     assert response.execution_mode == "generated-pandas"
     rows_by_presentation = {row["presentation"]: row["pass_rate"] for row in response.rows}
-    assert rows_by_presentation["2013J"] == 6.2
-    assert rows_by_presentation["2014J"] == 50.0
+    assert rows_by_presentation["2013J"] == 47.9
+    assert rows_by_presentation["2014J"] == 50.3
 
 
 @pytest.mark.asyncio
@@ -152,7 +152,7 @@ async def test_q5_five_lowest_grades_in_ccc(context):
     response = await workflow.run(question="Which five learners have the lowest grades in CCC?", history=[])
     assert len(response.rows) == 5
     assert [row["student_id"] for row in response.rows] == [
-        "OULAD-242636", "OULAD-2446778", "OULAD-529723", "OULAD-582827", "OULAD-599937",
+        "OULAD-2009279", "OULAD-242636", "OULAD-242778", "OULAD-2446778", "OULAD-244902",
     ]
     assert all(row["weighted_grade"] == 0.0 for row in response.rows)
 
@@ -173,7 +173,7 @@ async def test_q6_learners_who_failed_more_than_one_module(context):
     client, _ = _queue_client([program])
     workflow = _workflow(context, client)
     response = await workflow.run(question="How many learners failed more than one module?", history=[])
-    assert response.rows == [{"value": 39}]
+    assert response.rows == [{"value": 190}]
 
 
 @pytest.mark.asyncio
@@ -196,7 +196,7 @@ async def test_q7_percentage_of_withdrawn_learners_with_average_below_50(context
     response = await workflow.run(
         question="What percentage of learners who withdrew had an average below 50?", history=[]
     )
-    assert response.rows == [{"value": 15.3}]
+    assert response.rows == [{"value": 11.1}]
 
 
 @pytest.mark.asyncio
@@ -219,7 +219,7 @@ async def test_q8_highest_distinction_rate(context):
     workflow = _workflow(context, client)
     response = await workflow.run(question="Which module has the highest distinction rate?", history=[])
     assert response.rows[0]["course_code"] == "GGG"
-    assert response.rows[0]["distinction_rate"] == 31.2
+    assert response.rows[0]["distinction_rate"] == 15.6
 
 
 @pytest.mark.asyncio
@@ -282,14 +282,14 @@ async def test_q10_followup_uses_history_to_flip_sort_direction(context):
     client, _ = _queue_client([highest, lowest])
     workflow = _workflow(context, client)
     first = await workflow.run(question="Which module has the highest withdrawal rate?", history=[])
-    assert first.rows[0]["course_code"] == "AAA"
+    assert first.rows[0]["course_code"] == "CCC"
     second_workflow = _workflow(context, client)
     second = await second_workflow.run(
         question="What about the lowest?",
         history=[{"question": "Which module has the highest withdrawal rate?", "answer": first.answer}],
     )
     assert second.rows[0]["course_code"] == "GGG"
-    assert second.rows[0]["withdrawal_rate"] == 6.2
+    assert second.rows[0]["withdrawal_rate"] == 11.5
 
 
 @pytest.mark.asyncio
@@ -311,7 +311,7 @@ async def test_one_repair_attempt_recovers_from_unsafe_first_attempt(context):
     response = await workflow.run(question="What is the average grade in module BBB?", history=[])
     assert calls["n"] == 2
     assert response.execution_mode == "generated-pandas-repaired"
-    assert response.rows == [{"value": 66.1}]
+    assert response.rows == [{"value": 69.2}]
 
 
 @pytest.mark.asyncio

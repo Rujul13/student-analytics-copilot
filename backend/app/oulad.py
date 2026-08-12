@@ -24,10 +24,12 @@ def validate_source_directory(source_dir: Path) -> None:
         raise OuladValidationError(f"Missing OULAD files: {', '.join(missing)}")
 
 
-def _select_students(info: pd.DataFrame, limit_students: int) -> pd.Index:
+def _select_students(info: pd.DataFrame, limit_students: int | None) -> pd.Index:
     """Choose a fixed, stratified cohort with at least two academic histories."""
     history_counts = info.groupby("id_student").size()
     eligible = info[info["id_student"].isin(history_counts[history_counts >= 2].index)].copy()
+    if limit_students is None:
+        return pd.Index(sorted(info["id_student"].unique()))
     if len(history_counts) <= limit_students:
         return pd.Index(sorted(eligible["id_student"].unique()))
 
@@ -51,27 +53,50 @@ def _select_students(info: pd.DataFrame, limit_students: int) -> pd.Index:
     return pd.Index(sorted(selected[:limit_students]))
 
 
-def transform_oulad(source_dir: Path, limit_students: int = 750) -> dict[str, pd.DataFrame]:
-    """Transform canonical OULAD tables into the application's four-table model."""
+def transform_oulad(source_dir: Path, limit_students: int | None = 750) -> dict[str, pd.DataFrame]:
+    """Read and transform an official OULAD directory."""
     validate_source_directory(source_dir)
-    info = pd.read_csv(source_dir / "studentInfo.csv")
-    registration = pd.read_csv(source_dir / "studentRegistration.csv")
-    source_courses = pd.read_csv(source_dir / "courses.csv")
-    assessments = pd.read_csv(source_dir / "assessments.csv")
-    results = pd.read_csv(source_dir / "studentAssessment.csv")
+    return transform_oulad_dataframes(
+        pd.read_csv(source_dir / "studentInfo.csv"),
+        pd.read_csv(source_dir / "studentRegistration.csv"),
+        pd.read_csv(source_dir / "courses.csv"),
+        pd.read_csv(source_dir / "assessments.csv"),
+        pd.read_csv(source_dir / "studentAssessment.csv"),
+        limit_students,
+    )
+
+
+def transform_oulad_dataframes(
+    info: pd.DataFrame,
+    registration: pd.DataFrame,
+    source_courses: pd.DataFrame,
+    assessments: pd.DataFrame,
+    results: pd.DataFrame,
+    limit_students: int | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Transform already-loaded official OULAD tables into the canonical model."""
 
     eligible = _select_students(info, limit_students)
     info = info[info["id_student"].isin(eligible)].copy()
     registration = registration[registration["id_student"].isin(eligible)].copy()
 
+    latest_profiles = (
+        info.sort_values(["id_student", "code_presentation", "code_module"])
+        .drop_duplicates("id_student", keep="last")
+    )
     students = (
-        info[["id_student"]]
-        .drop_duplicates()
+        latest_profiles
         .assign(
             student_id=lambda frame: "OULAD-" + frame["id_student"].astype(str),
             display_name=lambda frame: "Learner " + frame["id_student"].astype(str),
             program="Open University",
+            previous_attempts=lambda frame: pd.to_numeric(frame["num_of_prev_attempts"], errors="coerce").fillna(0).astype(int),
+            studied_credits=lambda frame: pd.to_numeric(frame["studied_credits"], errors="coerce").fillna(0).astype(int),
         )[["student_id", "display_name", "program"]]
+    )
+    students = students.join(
+        latest_profiles[["highest_education", "num_of_prev_attempts", "studied_credits"]]
+        .rename(columns={"num_of_prev_attempts": "previous_attempts"})
     )
 
     course_names = {code: f"Module {code}" for code in sorted(source_courses["code_module"].unique())}
@@ -100,7 +125,9 @@ def transform_oulad(source_dir: Path, limit_students: int = 750) -> dict[str, pd
         enrollment_id=lambda frame: frame["student_id"] + "-" + frame["course_code"] + "-" + frame["presentation"],
         status=lambda frame: frame["final_result"].map({"Withdrawn": "Withdrawn"}).fillna("Completed"),
         credits=lambda frame: frame["final_result"].isin(["Pass", "Distinction"]).astype(int) * 30,
-    )[["enrollment_id", "student_id", "course_code", "presentation", "status", "final_result", "credits"]]
+        previous_attempts=lambda frame: pd.to_numeric(frame["num_of_prev_attempts"], errors="coerce").fillna(0).astype(int),
+        studied_credits=lambda frame: pd.to_numeric(frame["studied_credits"], errors="coerce").fillna(0).astype(int),
+    )[["enrollment_id", "student_id", "course_code", "presentation", "status", "final_result", "credits", "previous_attempts", "studied_credits", "highest_education"]]
 
     assessment_scores = results.merge(
         assessments[["id_assessment", "code_module", "code_presentation", "weight"]],

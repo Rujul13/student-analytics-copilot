@@ -14,12 +14,12 @@ def test_public_api_vertical_slice(monkeypatch):
 
         dashboard = client.get("/api/dashboard")
         assert dashboard.status_code == 200
-        assert dashboard.json()["dataset_name"] == "OULAD (curated 750-learner cohort)"
-        assert dashboard.json()["metrics"][0]["value"] == 750
+        assert dashboard.json()["dataset_name"] == "OULAD (full academic cohort)"
+        assert dashboard.json()["metrics"][0]["value"] == 28785
 
         filtered_dashboard = client.get("/api/dashboard", params={"course_code": "CCC"})
         assert filtered_dashboard.status_code == 200
-        assert filtered_dashboard.json()["metrics"][0]["value"] < 750
+        assert filtered_dashboard.json()["metrics"][0]["value"] < 28785
         assert [point["label"] for point in filtered_dashboard.json()["modules"]] == ["CCC"]
 
         student = client.get("/api/students").json()[0]
@@ -27,6 +27,7 @@ def test_public_api_vertical_slice(monkeypatch):
         assert recommendations.status_code == 200
         assert recommendations.json()["capability_mode"] == "historical-performance"
         assert recommendations.json()["catalog_label"] == "OULAD historical modules; future availability unknown"
+        assert recommendations.json()["evaluated_candidates"] >= len(recommendations.json()["recommendations"])
 
         query = client.post("/api/query", json={"question": "What is the average grade?"})
         assert query.status_code == 200

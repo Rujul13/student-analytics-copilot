@@ -91,6 +91,8 @@ def _dataset_payload(context: DatasetContext) -> dict:
         "doi": None if uploaded else "10.24432/C5KK69",
         "license": "User-managed" if uploaded else "CC BY 4.0",
         "excluded": [] if uploaded else ["studentVle.csv", "vle.csv"],
+        "storage": "Session-scoped canonical DataFrames" if uploaded else "DuckDB + Zstandard-compressed Parquet",
+        "offline_features": [] if uploaded else ["VLE total clicks per module history", "VLE active days per module history"],
         "enrichment": {
             "label": "User-provided catalog" if uploaded else "Authentic OULAD module history only",
             "future_courses": future_courses,
@@ -189,11 +191,11 @@ def students_endpoint(request: Request) -> list[StudentSummary]:
 @app.get("/api/students/{student_id}/recommendations", response_model=RecommendationResponse)
 async def recommendations_endpoint(student_id: str, request: Request) -> RecommendationResponse:
     try:
-        ranked = recommend(_context(request), student_id, limit=3)
+        ranked = recommend(_context(request), student_id)
         return await add_ai_explanations(
             ranked,
             request.app.state.settings.groq_api_key,
-            request.app.state.settings.llm_model,
+            request.app.state.settings.pandas_agent_model,
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Student not found") from error

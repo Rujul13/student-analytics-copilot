@@ -33,20 +33,20 @@ def test_preview_commit_reset_and_browser_session_isolation(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "")
     get_settings.cache_clear()
     with TestClient(app) as first, TestClient(app) as second:
-        assert first.get("/api/dashboard").json()["metrics"][0]["value"] == 750
-        assert second.get("/api/dashboard").json()["metrics"][0]["value"] == 750
+        assert first.get("/api/dashboard").json()["metrics"][0]["value"] == 28785
+        assert second.get("/api/dashboard").json()["metrics"][0]["value"] == 28785
 
         preview = first.post("/api/import/preview", files=canonical_files())
         assert preview.status_code == 200
         body = preview.json()
         assert body["mode"] == "uploaded-canonical"
         assert {item["role"] for item in body["files"]} == {"students", "courses", "enrollments", "grades"}
-        assert first.get("/api/dashboard").json()["metrics"][0]["value"] == 750
+        assert first.get("/api/dashboard").json()["metrics"][0]["value"] == 28785
 
         commit = first.post("/api/import/commit", json={"token": body["token"]})
         assert commit.status_code == 200
         assert first.get("/api/dashboard").json()["metrics"][0]["value"] == 2
-        assert second.get("/api/dashboard").json()["metrics"][0]["value"] == 750
+        assert second.get("/api/dashboard").json()["metrics"][0]["value"] == 28785
 
         invalid = first.post("/api/import/preview", files=canonical_files(unknown_student=True))
         assert invalid.status_code == 400
@@ -54,7 +54,24 @@ def test_preview_commit_reset_and_browser_session_isolation(monkeypatch):
 
         reset = first.post("/api/dataset/reset")
         assert reset.status_code == 200
-        assert first.get("/api/dashboard").json()["metrics"][0]["value"] == 750
+        assert first.get("/api/dashboard").json()["metrics"][0]["value"] == 28785
+
+
+def test_single_flat_file_is_normalized_into_canonical_tables(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    get_settings.cache_clear()
+    flat = [("files", ("history.csv", "Student ID,Name,Course ID,Title,Semester,Final Grade\nS1,Ada,C101,Analytics,2026J,82\nS2,Lin,C101,Analytics,2026J,38\n", "text/csv"))]
+    with TestClient(app) as client:
+        suggestion = client.post("/api/import/mapping-suggestions", files=flat)
+        assert suggestion.status_code == 200
+        mapping = suggestion.json()
+        assert mapping["safe_to_apply"] is True
+        assert mapping["ingestion_mode"] == "flexible"
+        preview = client.post("/api/import/preview", files=flat, data={"mapping_json": json.dumps(mapping)})
+        assert preview.status_code == 200, preview.text
+        body = preview.json()
+        assert body["capabilities"]["historical_recommendations"] is True
+        assert body["capabilities"]["graduation_aware_recommendations"] is False
 
 
 def test_template_download_and_lru_capacity(monkeypatch):
