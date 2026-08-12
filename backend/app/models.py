@@ -98,9 +98,17 @@ class ImportCommitRequest(BaseModel):
     token: str = Field(min_length=32, max_length=32)
 
 
+JSONScalar = str | int | float | bool | None
+
+
 class QueryResponse(BaseModel):
     answer: str
-    result_type: Literal["metric", "table", "unsupported"]
-    rows: list[dict[str, str | int | float]] = Field(default_factory=list)
-    calculation_trace: list[str]
+    result_type: Literal["metric", "table", "unsupported", "error"]
+    rows: list[dict[str, JSONScalar]] = Field(default_factory=list)
+    execution_mode: Literal[
+        "generated-pandas",
+        "generated-pandas-repaired",
+        "deterministic-fallback",
+        "unsupported",
+    ]
     ai_used: bool
