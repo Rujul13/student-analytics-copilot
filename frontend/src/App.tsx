@@ -156,13 +156,25 @@ function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
     } finally { setBusy(false); }
   }
 
-  function rowTitle(row: Record<string, string | number>, index: number) {
+  function rowTitle(row: QueryResponse["rows"][number], index: number) {
     return String(row.display_name ?? row.course_name ?? row.module ?? row.metric ?? row.student_id ?? row.course_code ?? `Result ${index + 1}`);
   }
 
-  function rowEvidence(row: Record<string, string | number>) {
+  function rowEvidence(row: QueryResponse["rows"][number]) {
     const hidden = new Set(["display_name", "course_name", "module", "metric"]);
     return Object.entries(row).filter(([key]) => !hidden.has(key));
+  }
+
+  function executionStatusLabel(mode: QueryResponse["execution_mode"]): string {
+    switch (mode) {
+      case "generated-pandas":
+      case "generated-pandas-repaired":
+        return "Calculated from the active dataset using Pandas";
+      case "deterministic-fallback":
+        return "Verified fallback calculation";
+      default:
+        return "";
+    }
   }
 
   return <section className="copilot-layout">
@@ -194,7 +206,9 @@ function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
                 <div>{rowEvidence(row).map(([key, value]) => <span key={key}><small>{key.replaceAll("_", " ")}</small>{String(value)}</span>)}</div>
               </div>)}
             </div>}
-            {message.result.calculation_trace.length > 0 && <details className="calculation-details"><summary>How this was calculated <small>(optional)</small></summary><ol>{message.result.calculation_trace.map((step) => <li key={step}>{step}</li>)}</ol></details>}
+            {executionStatusLabel(message.result.execution_mode) && (
+              <div className="execution-status">{executionStatusLabel(message.result.execution_mode)}</div>
+            )}
           </div>
         </article>)}
         {busy && <Loading />}

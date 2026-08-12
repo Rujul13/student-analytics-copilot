@@ -135,7 +135,7 @@ h2 { font-size: 22px; }
 .evidence-row span { background: #f6f7fb; border-radius: 7px; padding: 5px 7px; font-size: 9px; color: #3d4862; }
 .evidence-row small { display: block; color: #929bad; text-transform: capitalize; font-size: 7px; margin-bottom: 1px; }
 details { margin-top: 18px; color: var(--muted); font-size: 11px; } details summary { color: #47526c; font-weight: 700; cursor: pointer; } details li { margin: 6px 0; }
-.calculation-details { opacity: .78; }.calculation-details summary small { font-weight: 500; color: #9098aa; }
+.execution-status { margin-top: 14px; color: var(--muted); font-size: 11px; opacity: .78; }
 .query-box { border: 1px solid #cfd6e5; padding: 7px 7px 7px 16px; border-radius: 13px; display: flex; gap: 8px; box-shadow: 0 6px 22px rgba(27,42,76,.08); }
 .query-box:focus-within { border-color: var(--blue); }
 .query-box input { border: 0; outline: 0; flex: 1; min-width: 0; color: var(--ink); }

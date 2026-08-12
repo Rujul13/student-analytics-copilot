@@ -130,9 +130,9 @@ export interface RecommendationResponse {
 
 export interface QueryResponse {
   answer: string;
-  result_type: "metric" | "table" | "unsupported";
-  rows: Record<string, string | number>[];
-  calculation_trace: string[];
+  result_type: "metric" | "table" | "unsupported" | "error";
+  rows: Record<string, string | number | boolean | null>[];
+  execution_mode: "generated-pandas" | "generated-pandas-repaired" | "deterministic-fallback" | "unsupported";
   ai_used: boolean;
 }
 
