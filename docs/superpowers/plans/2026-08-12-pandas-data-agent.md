@@ -524,6 +524,86 @@ def test_worker_does_not_mutate_the_caller_dataframe():
     original = FRAMES["enrollments"].copy(deep=True)
     run_pandas_code("enrollments['course_code'] = 'X'\nresult = 1", FRAMES)
     pd.testing.assert_frame_equal(FRAMES["enrollments"], original)
+
+
+# --- Regression tests added after code review found real, demonstrated gaps in the
+# initial implementation (unbounded serialized size, incomplete NumPy/Pandas -> JSON
+# conversion, and a dunder-introspection sandbox escape reachable without an `import`) ---
+
+
+def test_bounds_serialized_size_for_a_single_oversized_row():
+    huge_value_literal = "'x' * 500_000"
+    outcome = run_pandas_code(f"result = {{'note': {huge_value_literal}}}", FRAMES)
+    assert outcome.status == "ok"
+    assert outcome.truncated is True
+    import json
+
+    assert len(json.dumps(outcome.rows, default=str)) <= 200_100
+
+
+def test_bounds_serialized_size_for_many_moderately_sized_rows():
+    # 100 rows (not more - MAX_RESULT_ROWS=100 in _normalize_result would otherwise cap the
+    # row count *before* _shrink_to_budget runs, which would mask the very loop this test
+    # exists to exercise) x 5000 chars each is ~501KB pre-shrink, comfortably over the 200KB
+    # budget by more than 2x - `_shrink_to_budget` must halve at least twice (100 -> 50 -> 25)
+    # to land under budget, which is what actually falsifies the original single-halve bug.
+    # A smaller payload (e.g. fewer rows or shorter strings) can satisfy this test after only
+    # one halving - the same result a single-pass (non-looping) shrink would also produce -
+    # so it would pass without the loop actually working. This spawn is slower than the
+    # other worker tests on Windows (real subprocess creation + pandas/numpy import in the
+    # child), so it uses a longer timeout than the module default rather than smaller data.
+    code = "result = [{'note': 'x' * 5000} for _ in range(100)]"
+    outcome = run_pandas_code(code, FRAMES, timeout=15.0)
+    assert outcome.status == "ok"
+    assert outcome.truncated is True
+    import json
+
+    assert len(json.dumps(outcome.rows, default=str)) <= 200_100
+
+
+def test_normalizes_timestamp_and_timedelta_and_datetime64_values():
+    code = (
+        "result = {\n"
+        "    'ts': pd.Timestamp('2020-01-01'),\n"
+        "    'delta': pd.Timedelta(days=1),\n"
+        "    'dt64': np.datetime64('2020-01-01'),\n"
+        "}\n"
+    )
+    outcome = run_pandas_code(code, FRAMES)
+    assert outcome.status == "ok"
+    values = {row["key"]: row["value"] for row in outcome.rows}
+    assert values["ts"] == "2020-01-01T00:00:00"
+    assert values["delta"].startswith("P1D")
+    assert values["dt64"].startswith("2020-01-01")
+
+
+def test_worker_independently_rejects_dunder_introspection_without_the_ast_validator():
+    # This code contains no `import` statement and no forbidden builtin name - it is the
+    # classic `().__class__.__bases__[0].__subclasses__()` sandbox-escape family, which a
+    # bare restricted-`__builtins__` dict does not stop on its own. The worker must reject
+    # it independently (see _reject_unsafe_constructs), since this test calls the worker
+    # directly without running it through the separate AST validator first.
+    code = "mods = [c.__module__ for c in ().__class__.__bases__[0].__subclasses__()]\nresult = 'os' in mods"
+    outcome = run_pandas_code(code, FRAMES)
+    assert outcome.status == "error"
+
+
+def _noop_worker_entry(code, frames, result_queue):
+    # Module-level (spawn-picklable) stand-in for `_worker_entry` that deliberately returns
+    # without ever calling `result_queue.put(...)` - simulates a child process that exits
+    # (e.g. an interpreter crash or an uncaught BaseException) before it can report a
+    # result, exercising the `except Empty:` branch in `run_pandas_code` without needing to
+    # actually crash a real interpreter.
+    return
+
+
+def test_run_pandas_code_handles_a_worker_that_exits_without_a_result(monkeypatch):
+    import app.pandas_worker as pandas_worker_module
+
+    monkeypatch.setattr(pandas_worker_module, "_worker_entry", _noop_worker_entry)
+    outcome = run_pandas_code("result = 1", FRAMES)
+    assert outcome.status == "error"
+    assert "without" in outcome.error.lower()
 ```
 
 - [ ] **Step 3: Run tests to verify they fail**
@@ -587,6 +667,8 @@ def _apply_resource_limits() -> None:
 
 
 def _normalize_value(value: Any) -> Any:
+    if value is pd.NaT:
+        return None
     if isinstance(value, np.integer):
         return int(value)
     if isinstance(value, np.floating):
@@ -598,13 +680,20 @@ def _normalize_value(value: Any) -> Any:
         return [_normalize_value(item) for item in value.tolist()]
     if isinstance(value, float) and np.isnan(value):
         return None
-    if isinstance(value, pd.Timestamp):
-        return value.isoformat()
+    if isinstance(value, (pd.Timestamp, np.datetime64)):
+        return pd.Timestamp(value).isoformat()
+    if isinstance(value, (pd.Timedelta, np.timedelta64)):
+        return pd.Timedelta(value).isoformat()
     if isinstance(value, dict):
         return {str(key): _normalize_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_normalize_value(item) for item in value]
-    return value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    # Last-resort fallback for any other Pandas/NumPy extension type (Period, Interval,
+    # Categorical, complex, etc.) not already covered above - stringify rather than let a
+    # raw non-JSON-serializable object reach the multiprocessing Queue or the caller.
+    return str(value)
 
 
 def _normalize_result(result: Any) -> tuple[str, list[dict[str, Any]], bool]:
@@ -638,23 +727,79 @@ def _normalize_result(result: Any) -> tuple[str, list[dict[str, Any]], bool]:
 def _shrink_to_budget(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
     import json
 
-    try:
-        size = len(json.dumps(rows, default=str))
-    except (TypeError, ValueError):
-        return rows[:1], True
-    if size <= MAX_SERIALIZED_BYTES or len(rows) <= 1:
+    if not rows:
         return rows, False
-    return rows[: max(1, len(rows) // 2)], True
+
+    def _serialized_size(candidate: list[dict[str, Any]]) -> int:
+        try:
+            return len(json.dumps(candidate, default=str))
+        except (TypeError, ValueError):
+            return MAX_SERIALIZED_BYTES + 1
+
+    truncated = False
+    while len(rows) > 1 and _serialized_size(rows) > MAX_SERIALIZED_BYTES:
+        rows = rows[: max(1, len(rows) // 2)]
+        truncated = True
+
+    if _serialized_size(rows) > MAX_SERIALIZED_BYTES:
+        # Even a single row is over budget (e.g. one very large string value) - the row
+        # count is already at the floor, so shrink the oversized values within it instead
+        # of returning an unbounded payload.
+        shrunk_row: dict[str, Any] = {}
+        for key, value in rows[0].items():
+            if isinstance(value, str) and len(value) > 500:
+                shrunk_row[key] = value[:500] + "...(truncated)"
+            else:
+                shrunk_row[key] = value
+        rows = [shrunk_row]
+        truncated = True
+
+    return rows, truncated
+
+
+def _is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
+
+
+def _reject_unsafe_constructs(code: str) -> str | None:
+    """A minimal, self-contained static pre-check the worker runs on its own, independent
+    of backend/app/pandas_code_validation.py's full AST validator (this module must not
+    import that one - see Task 3's brief). This exists as defense-in-depth: even if this
+    worker is ever invoked without the upstream validator running first, it still refuses
+    to run code that reaches for imports or dunder attributes - closing the classic
+    `().__class__.__bases__[0].__subclasses__()` sandbox-escape family - inside its own
+    process. It is intentionally narrower than the full validator (imports + dunders only);
+    it is not a replacement for it. Returns a sanitized error message, or None if the code
+    passes this check.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(code, mode="exec")
+    except SyntaxError:
+        return "Generated code is not valid Python"
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return "Import statements are not allowed"
+        if isinstance(node, ast.Name) and _is_dunder(node.id):
+            return f"Disallowed dunder identifier: {node.id}"
+        if isinstance(node, ast.Attribute) and _is_dunder(node.attr):
+            return f"Disallowed dunder attribute: {node.attr}"
+    return None
 
 
 def _worker_entry(code: str, frames: dict[str, pd.DataFrame], result_queue: Any) -> None:
     os.environ.clear()
     _apply_resource_limits()
+    rejection = _reject_unsafe_constructs(code)
+    if rejection is not None:
+        result_queue.put(("error", rejection))
+        return
     try:
         namespace: dict[str, Any] = {"__builtins__": _safe_builtins(), "pd": pd, "np": np}
         namespace.update(frames)
         compiled = compile(code, "<generated_pandas_program>", "exec")
-        exec(compiled, namespace)  # noqa: S102 - namespace is restricted; code is AST-validated upstream
+        exec(compiled, namespace)  # noqa: S102 - namespace is restricted; code is AST-validated upstream and by _reject_unsafe_constructs above
         if "result" not in namespace:
             result_queue.put(("error", "Generated code did not assign a value to `result`"))
             return
@@ -673,18 +818,39 @@ def run_pandas_code(
     frame_copies = {name: frame.copy(deep=True) for name, frame in frames.items()}
     process = ctx.Process(target=_worker_entry, args=(code, frame_copies, result_queue), daemon=True)
     process.start()
-    process.join(timeout)
+    # Read from the queue BEFORE joining the process - do not call `process.join(timeout)`
+    # first. `multiprocessing.Queue.put()` writes through a background feeder thread onto an
+    # OS pipe with a bounded buffer; if the parent joins first and the payload is larger than
+    # that buffer (this bit for real during Task 3's own fix-round testing: a 100-row,
+    # ~500KB result reproducibly hung for minutes on this machine), the child blocks writing
+    # to a pipe nobody is draining yet while the parent blocks waiting for the child to exit -
+    # a classic multiprocessing deadlock, only bounded by the outer timeout escalating to
+    # terminate()/kill() and then reporting a false "timeout" for work that had actually
+    # already completed. Reading first drains the pipe as data arrives and also serves as the
+    # wait-for-completion step, so the deadlock cannot occur.
+    try:
+        status, payload = result_queue.get(timeout=timeout)
+    except Empty:
+        # Distinguish "still running past the deadline" (a real timeout - kill it) from
+        # "already exited without ever queueing a result" (e.g. an interpreter crash or an
+        # uncaught BaseException that bypassed _worker_entry's own exception handling) - both
+        # raise Empty here, but only the first is actually a timeout.
+        if process.is_alive():
+            process.terminate()
+            process.join(1)
+            if process.is_alive():
+                process.kill()
+                process.join(1)
+            return WorkerExecutionResult(status="timeout", error="Execution exceeded the time limit")
+        process.join(1)
+        return WorkerExecutionResult(status="error", error="Worker process exited without a result")
+    process.join(1)
     if process.is_alive():
         process.terminate()
         process.join(1)
         if process.is_alive():
             process.kill()
             process.join(1)
-        return WorkerExecutionResult(status="timeout", error="Execution exceeded the time limit")
-    try:
-        status, payload = result_queue.get(timeout=1)
-    except Empty:
-        return WorkerExecutionResult(status="error", error="Worker process exited without a result")
     if status == "error":
         return WorkerExecutionResult(status="error", error=str(payload))
     return WorkerExecutionResult(
