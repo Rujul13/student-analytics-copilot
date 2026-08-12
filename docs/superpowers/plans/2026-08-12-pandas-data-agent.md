@@ -208,6 +208,17 @@ def test_accepts_a_valid_groupby_table_program():
         "result = pd.read_csv('x.csv')",
         "result = enrollments.to_pickle('x.pkl')",
         "enrollments.drop(columns=['course_code'], inplace=True)\nresult = 1",
+        # Adversarial cases confirmed as real bypasses during Task 2 code review; each must
+        # independently be rejected, not just the literal `inplace=True` case above.
+        "flag = True\nenrollments.drop(columns=['course_code'], inplace=flag)\nresult = 1",
+        "enrollments.sort_values('course_code', inplace=(1 == 1))\nresult = 1",
+        "kwargs = {'inplace': True}\nenrollments.drop(columns=['course_code'], **kwargs)\nresult = 1",
+        "enrollments.pop('course_code')\nresult = 1",
+        "enrollments.update(grades)\nresult = 1",
+        "handle = pd.io.common.get_handle('secret.csv', 'r')\nresult = 1",
+        "np.save('out.npy', enrollments.values)\nresult = 1",
+        "arr = np.load('/etc/passwd')\nresult = arr",
+        "result = np.fromfile('/etc/passwd')",
     ],
 )
 def test_rejects_unsafe_or_disallowed_code(code):
@@ -259,7 +270,20 @@ FORBIDDEN_NAMES = frozenset(
     }
 )
 FORBIDDEN_IO_ATTRIBUTES = frozenset(
-    {"to_csv", "to_excel", "to_pickle", "to_parquet", "to_sql", "to_json", "to_clipboard"}
+    {
+        "to_csv", "to_excel", "to_pickle", "to_parquet", "to_sql", "to_json", "to_clipboard",
+        "to_hdf", "to_feather", "to_stata",
+        # pandas/numpy file-I/O entry points reachable via the allowed `pd`/`np` roots that
+        # do not follow the to_*/read_* naming convention:
+        "io", "get_handle", "save", "load", "fromfile", "tofile", "genfromtxt", "loadtxt",
+        "savetxt", "memmap",
+    }
+)
+FORBIDDEN_MUTATING_ATTRIBUTES = frozenset(
+    # DataFrame/Series methods that mutate their receiver in place with no `inplace=`
+    # parameter to gate on - `inplace=True` is already rejected outright below, but these
+    # need their own check since they have no such keyword to catch.
+    {"pop", "update", "insert"}
 )
 FORBIDDEN_NODE_TYPES = (
     ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef,
@@ -331,10 +355,23 @@ def validate_code(code: str, max_length: int = 4000) -> None:
                 raise CodeValidationError(f"Disallowed dunder attribute: {node.attr}")
             if node.attr in FORBIDDEN_IO_ATTRIBUTES or node.attr.startswith("read_"):
                 raise CodeValidationError(f"Disallowed I/O method: {node.attr}")
+            if node.attr in FORBIDDEN_MUTATING_ATTRIBUTES:
+                raise CodeValidationError(f"Disallowed in-place-mutating method: {node.attr}")
 
-        if isinstance(node, ast.keyword) and node.arg == "inplace":
-            if isinstance(node.value, ast.Constant) and node.value.value is True:
-                raise CodeValidationError("In-place mutation (inplace=True) is not allowed")
+        if isinstance(node, ast.keyword):
+            # Reject `inplace=` outright, for ANY value - not just a literal `True`. Generated
+            # code never legitimately needs `inplace=` at all (the contract is "assign the
+            # result to `result`"), and checking only `ast.Constant(True)` is trivially bypassed
+            # by a variable (`flag = True; df.drop(inplace=flag)`) or an expression
+            # (`inplace=(1 == 1)`) - a blanket reject closes that off structurally rather than
+            # trying to prove an arbitrary expression is never truthy.
+            if node.arg == "inplace":
+                raise CodeValidationError("The `inplace` keyword argument is not allowed")
+            # `**kwargs`-style call unpacking has `arg is None`; block it outright so a keyword
+            # like `inplace=True` can never be smuggled past the check above inside a dict
+            # (`enrollments.drop(**{'inplace': True})`).
+            if node.arg is None:
+                raise CodeValidationError("Keyword-argument unpacking (**kwargs) is not allowed in a call")
 
         if isinstance(node, (ast.Subscript, ast.Attribute)) and isinstance(getattr(node, "ctx", None), (ast.Store, ast.Del)):
             root = _root_name(node)
