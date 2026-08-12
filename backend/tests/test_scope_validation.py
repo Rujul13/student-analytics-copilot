@@ -73,6 +73,13 @@ def test_detects_missing_demographic_field(context):
     assert scope.course_codes == ["BBB"]
 
 
+@pytest.mark.parametrize("term", ["professor", "instructor", "faculty", "teacher"])
+def test_detects_unavailable_instructor_information(context, term):
+    scope = extract_scope(f"Who is the best {term}?", context)
+    assert scope.missing_fields == ["professor or instructor information"]
+    assert "professor or instructor information" in missing_field_answer(scope.missing_fields)
+
+
 def test_missing_field_answer_names_the_field():
     answer = missing_field_answer(["gender"])
     assert "gender" in answer

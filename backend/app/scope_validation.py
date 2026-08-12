@@ -15,6 +15,10 @@ DEMOGRAPHIC_TERMS: dict[str, str] = {
     "age band": "age band",
     "age group": "age band",
     "ethnicity": "ethnicity",
+    "professor": "professor or instructor information",
+    "instructor": "professor or instructor information",
+    "faculty": "professor or instructor information",
+    "teacher": "professor or instructor information",
 }
 
 # Maps question-text terms (including common inflections) to the canonical `final_result`
