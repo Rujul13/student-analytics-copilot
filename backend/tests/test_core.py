@@ -190,6 +190,23 @@ def test_distinction_count_and_scoped_learner_fallback():
     assert profile.execution_mode == "deterministic-fallback"
 
 
+def test_fallback_never_converts_rate_or_ranking_questions_into_simple_counts():
+    dataset = context()
+    withdrawal_rate = answer_question(dataset, "Which module has the highest withdrawal rate?", False)
+    distinction_rate = answer_question(dataset, "Which module has the highest distinction rate?", False)
+    grouped_average = answer_question(dataset, "Which module has the lowest average grade?", False)
+    compound_withdrawal = answer_question(
+        dataset,
+        "What percentage of withdrawn learners have an average grade below 50?",
+        False,
+    )
+
+    for response in (withdrawal_rate, distinction_rate, grouped_average, compound_withdrawal):
+        assert response.result_type == "unsupported"
+        assert response.rows == []
+        assert "could not verify" in response.answer.lower()
+
+
 # NOTE: test_validated_failure_profile_and_recommendation_plans previously built three
 # `AnalyticsPlan`s (intents "student_failure_table", "student_profile", "student_recommendation")
 # and ran them through `execute_plan`. That fixed-intent enum no longer exists — the new agent

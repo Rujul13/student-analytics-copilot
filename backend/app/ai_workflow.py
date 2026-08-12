@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from groq import AsyncGroq
@@ -17,6 +18,9 @@ from .models import QueryResponse
 from .pandas_worker import WorkerExecutionResult
 from .repository import DatasetContext
 from .scope_validation import ScopeFilters, extract_scope, missing_field_answer
+
+
+logger = logging.getLogger(__name__)
 
 
 class ScopeCheckedQuestion(Event):
@@ -121,5 +125,6 @@ async def run_copilot(
         return answer_question(dataset, question, ai_enabled=False)
     try:
         return await workflow.run(question=question, history=history or [])
-    except Exception:
+    except Exception as error:
+        logger.warning("Generated-Pandas workflow failed; using deterministic fallback (%s)", type(error).__name__)
         return answer_question(dataset, question, ai_enabled=False)

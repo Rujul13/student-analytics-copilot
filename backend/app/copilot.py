@@ -16,6 +16,15 @@ def data_availability_answer(question: str) -> str:
     return "The available data does not include the fields or a defined metric needed to answer that question objectively."
 
 
+def unsupported_fallback_answer() -> QueryResponse:
+    return QueryResponse(
+        answer="I could not verify that calculation in fallback mode. Please retry when AI analytics is available.",
+        result_type="unsupported",
+        execution_mode="deterministic-fallback",
+        ai_used=False,
+    )
+
+
 def answer_question(context: DatasetContext, question: str, ai_enabled: bool) -> QueryResponse:
     """Maps supported questions to verified Pandas-backed operations."""
     normalized = re.sub(r"\s+", " ", question.lower().strip())
@@ -49,6 +58,8 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
             ai_used=False,
         )
     if "distinction" in normalized:
+        if any(term in normalized for term in ["rate", "percent", "highest", "lowest", "best", "worst", "by module", "per module"]):
+            return unsupported_fallback_answer()
         enrollments = context.frames["enrollments"]
         count = int(enrollments.loc[enrollments["final_result"].eq("Distinction"), "student_id"].nunique())
         return QueryResponse(
@@ -59,6 +70,11 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
             ai_used=False,
         )
     if "withdraw" in normalized or "withdrew" in normalized:
+        if any(term in normalized for term in [
+            "rate", "percent", "highest", "lowest", "best", "worst", "by module", "per module",
+            "average", "below", "above", "compare", "comparison",
+        ]):
+            return unsupported_fallback_answer()
         enrollments = context.frames["enrollments"]
         count = int(enrollments.loc[enrollments["final_result"].eq("Withdrawn"), "student_id"].nunique())
         return QueryResponse(
@@ -106,6 +122,11 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
     }
     for phrase, metric in metric_map.items():
         if phrase in normalized:
+            if course_code is None and any(term in normalized for term in [
+                "by module", "per module", "each module", "highest", "lowest", "best", "worst", "top", "bottom",
+                "compare", "comparison", "below", "above",
+            ]):
+                return unsupported_fallback_answer()
             return QueryResponse(
                 answer=f"{metric.label} is {metric.display}.",
                 result_type="metric",

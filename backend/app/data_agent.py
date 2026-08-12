@@ -158,7 +158,8 @@ async def synthesize_answer(
                 "content": (
                     "Write one concise, natural-language answer using only the supplied computed_result. "
                     "Do not invent numbers, causes, or explanations that are not in the payload. "
-                    "State the key figure or finding directly."
+                    "State the key figure or finding directly, including the relevant module, learner, metric, and unit. "
+                    "Do not answer with only a bare identifier or number."
                 ),
             },
             {"role": "user", "content": json.dumps(payload)},
