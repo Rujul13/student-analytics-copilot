@@ -6,6 +6,7 @@ pydantic-settings==2.10.1
 python-multipart==0.0.20
 httpx==0.28.1
 pytest==8.4.1
+pytest-asyncio==0.24.0
 groq==1.6.0
 llama-index-core==0.14.23
 llama-index-retrievers-bm25==0.7.1
