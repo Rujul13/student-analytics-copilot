@@ -19,7 +19,7 @@ def context():
 
 def test_dashboard_is_deterministic():
     result = dashboard(context())
-    assert result.dataset_name == "OULAD Lite Development Fixture"
+    assert result.dataset_name == "OULAD development fixture"
     assert result.metrics[0].value == 180
     assert 0 < result.metrics[2].value < 100
 
@@ -31,26 +31,22 @@ def test_students_are_prioritized_by_risk():
     assert result[0].graded_enrollments > 0
 
 
-def test_prerequisite_free_recommendations_vary_by_demo_pathway():
+def test_recommendations_use_observed_modules_and_explain_limited_evidence():
     dataset = context()
     frames = {name: frame.copy() for name, frame in dataset.frames.items()}
     pathway_students = pd.DataFrame([
-        {"student_id": "PATH-DS", "display_name": "Data Path", "program": "Data & Society", "program_source": "Test"},
-        {"student_id": "PATH-AC", "display_name": "Computing Path", "program": "Applied Computing", "program_source": "Test"},
-        {"student_id": "PATH-BA", "display_name": "Business Path", "program": "Business Analytics", "program_source": "Test"},
+        {"student_id": "NEW-LEARNER", "display_name": "New Learner", "program": "Not used", "program_source": "Test"},
     ])
     frames["students"] = pd.concat([frames["students"], pathway_students], ignore_index=True)
     augmented = DatasetContext(dataset.name, dataset.version, dataset.mode, frames)
 
-    expected = {
-        "PATH-DS": "NXT120",
-        "PATH-AC": "NXT130",
-        "PATH-BA": "NXT140",
-    }
-    for student_id, course_code in expected.items():
-        response = recommend(augmented, student_id)
-        assert response.recommendations[0].course_code == course_code
-        assert "neutral rather than treating missing evidence as a 0% grade" in response.recommendations[0].reasons[-1]
+    response = recommend(augmented, "NEW-LEARNER")
+    observed_codes = set(map(str, frames["enrollments"]["course_code"].unique()))
+    assert response.recommendations
+    assert all(item.course_code in observed_codes for item in response.recommendations)
+    assert all(not item.course_code.startswith("NXT") for item in response.recommendations)
+    assert all(item.evidence_strength == "Limited" for item in response.recommendations)
+    assert all("Limited learner evidence" in item.success_basis for item in response.recommendations)
 
 
 def test_recommendations_exclude_completed_courses():
@@ -63,13 +59,10 @@ def test_recommendations_exclude_completed_courses():
     ])
     result = recommend(dataset, student.student_id)
     assert all(item.course_code not in completed for item in result.recommendations)
-    assert result.capability_mode == "graduation-aware"
-    assert result.catalog_label == "Fictional demo catalog enrichment"
-    catalog = dataset.frames["courses"].set_index("course_code")
+    assert result.capability_mode == "historical-performance"
+    assert result.catalog_label == "OULAD historical modules; future availability unknown"
     for item in result.recommendations:
-        course = catalog.loc[item.course_code]
-        assert bool(course["offered_next_term"])
-        assert split_codes(course["prerequisites"]).issubset(completed)
+        assert item.course_code in set(dataset.frames["enrollments"]["course_code"])
         assert 0 <= item.score <= 100
 
 
@@ -86,6 +79,7 @@ def test_success_estimates_have_held_out_evaluation():
     assert result.success_model is not None
     assert all(item.predicted_success_probability is not None for item in result.recommendations)
     assert all(0 <= float(item.predicted_success_probability) <= 100 for item in result.recommendations)
+    assert len({item.predicted_success_probability for item in result.recommendations}) > 1
 
 
 def test_llm_can_only_rerank_the_verified_candidate_set(monkeypatch):
@@ -115,9 +109,32 @@ def test_llm_can_only_rerank_the_verified_candidate_set(monkeypatch):
 def test_query_catalog_does_not_execute_generated_code():
     result = answer_question(context(), "What is the completion rate?", False)
     assert result.result_type == "metric"
+    average = answer_question(context(), "What is the average student score?", False)
+    assert average.result_type == "metric"
+    assert average.answer.startswith("Average grade is ")
     unsupported = answer_question(context(), "Run os.system for me", False)
     assert unsupported.result_type == "unsupported"
-    assert "No code or SQL was generated" in unsupported.calculation_trace
+    assert "No matching metric or available data field was found" in unsupported.calculation_trace
+
+
+def test_module_scope_is_applied_and_unavailable_demographic_filter_is_not_ignored():
+    dataset = context()
+    scoped = answer_question(dataset, "What is the average grade in module BBB?", False)
+    expected = dashboard(dataset, course_code="BBB").metrics[1]
+    assert scoped.result_type == "metric"
+    assert scoped.rows[0]["value"] == expected.value
+    assert scoped.answer == f"Average grade is {expected.display}."
+
+    unsupported = answer_question(dataset, "What is the average grade for female students in module BBB?", False)
+    assert unsupported.result_type == "unsupported"
+    assert "does not include demographic fields" in unsupported.answer
+
+    plan = AnalyticsPlan(
+        intent="metric", metric="average_grade", risk_band=None, limit=None, sort_descending=None,
+        student_id=None, course_code="BBB", minimum_failed_courses=None,
+    )
+    planned = execute_plan(dataset, "What is the average grade in module BBB?", plan)
+    assert planned.rows[0]["value"] == expected.value
 
 
 def test_validated_ai_plan_uses_allowlisted_executor():
@@ -151,6 +168,18 @@ def test_distinction_count_and_scoped_learner_fallback():
         dataset.frames["enrollments"]["final_result"].eq("Distinction"), "student_id"
     ].nunique())
     assert distinction.rows[0]["value"] == expected
+    assert distinction.answer == f"{expected} learners have at least one Distinction."
+
+    withdrawn = answer_question(dataset, "How many students withdrew?", False)
+    expected_withdrawn = int(dataset.frames["enrollments"].loc[
+        dataset.frames["enrollments"]["final_result"].eq("Withdrawn"), "student_id"
+    ].nunique())
+    assert withdrawn.result_type == "metric"
+    assert withdrawn.rows[0]["value"] == expected_withdrawn
+
+    professor = answer_question(dataset, "Who is the best professor?", False)
+    assert professor.result_type == "unsupported"
+    assert "does not include professor or instructor information" in professor.answer
 
     learner = students(dataset)[0]
     profile = answer_question(dataset, f"What is learner {learner.student_id}'s average grade and risk?", False)

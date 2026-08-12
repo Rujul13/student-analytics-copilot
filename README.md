@@ -3,12 +3,12 @@
 An evidence-first OULAD analytics application with three core experiences:
 
 - deterministic academic dashboard;
-- safe natural-language data querying;
+- verified natural-language data querying;
 - transparent course recommendations.
 
 The living rationale for the system design, implemented trade-offs, evaluated alternatives, and improvement roadmap is maintained in [DECISIONS.md](DECISIONS.md).
 
-The recommendation engine uses a clearly labeled fictional demo catalog because OULAD does not contain prerequisites, degree requirements, or future offerings. Eligibility and fit scores are deterministic; Groq may rerank only the already-eligible top candidate set and explain the order, but cannot create a course, bypass a rule, or alter a verified score.
+The recommendation engine ranks only authentic OULAD module codes. It combines each learner's observed history with module-specific pass rate, withdrawal rate, average grade, and sample size. Groq may rerank only the verified candidate set and explain the order; it cannot invent a module or alter calculated evidence. Because OULAD does not contain future offerings, prerequisites, or degree requirements, administrators are told to verify those before acting.
 
 ## Enhanced assignment coverage
 
@@ -17,7 +17,7 @@ The recommendation engine uses a clearly labeled fictional demo catalog because 
 - Assignment-level questions for distinctions and learners failing multiple courses are supported, along with scoped learner profiles and recommendation questions.
 - CSV imports include an AI-assisted header-mapping review step. Only filenames and headers are sent for mapping; users must confirm before deterministic validation and atomic activation.
 - Recommendation eligibility remains deterministic. Groq may rerank only the already-eligible top candidate set through a strict schema, and the UI reports whether hybrid reranking succeeded.
-- A temporal academic-history logistic baseline provides held-out success estimates with accuracy, ROC AUC, and Brier score disclosed in the UI. Estimates are explicitly not guarantees.
+- A temporal learner-and-module logistic baseline provides course-specific held-out success estimates with accuracy, ROC AUC, and Brier score disclosed in the UI. Evidence strength is shown as limited, moderate, or strong; estimates are explicitly not guarantees.
 
 ## Current build status
 
@@ -41,7 +41,7 @@ Download the OULAD CSV package and place these files in a private local director
 - `assessments.csv`
 - `studentAssessment.csv`
 
-The current workspace already contains these files in the ignored local data directory. For another machine, set `DATASET_PATH` to the downloaded directory. The service validates the inputs and transforms a fixed, stratified cohort of 750 learners into the canonical `students`, `courses`, `enrollments`, and `grades` tables at startup. Raw data is intentionally ignored by Git.
+The current workspace already contains these files in the ignored local data directory. For another machine, set `DATASET_PATH` to the downloaded directory. The service validates the inputs and transforms a fixed, stratified cohort of 750 authentic OULAD learners into the canonical `students`, `courses`, `enrollments`, and `grades` tables at startup. The UI calls this **OULAD (curated 750-learner cohort)** rather than “OULAD Lite.” Raw data is intentionally ignored by Git.
 
 The reproducible canonical cohort is stored in `backend/data/processed` with its manifest and is included in the deployment image. Rebuild it after changing the selection logic with `python backend/scripts/build_oulad_lite.py`.
 
@@ -49,13 +49,13 @@ The reproducible canonical cohort is stored in `backend/data/processed` with its
 
 With `GROQ_API_KEY`, a bounded LlamaIndex Workflow retrieves relevant analytics capabilities with BM25 and asks Groq for a strict, schema-validated `AnalyticsPlan`. The plan can select only allowlisted Pandas executors; it cannot contain Python, SQL, expressions, column names, or function references. A second bounded call may turn the verified result into a conversational answer, but cannot add unsupported values. The result includes an audit trace.
 
-Without the key—or when the live planner times out or fails validation—the dashboard, deterministic rankings, and safe fallback query catalog continue to work.
+Without the key—or when the live planner times out or fails validation—the dashboard, deterministic rankings, and verified fallback metrics continue to work.
 
 ## Importing another dataset
 
 Open **Import data** in the application and select the four canonical CSV files together. Downloadable starter templates are provided in the wizard. The service validates file size, required columns, numeric ranges, primary keys, and cross-table foreign keys before issuing a ten-minute preview token. Activating the token swaps all four tables atomically for that browser session.
 
-Uploaded data is held only in server memory, expires after 30 minutes of inactivity, and is isolated by an opaque HTTP-only session cookie. It is never included in the Groq planning prompt. Resetting returns only that browser session to the bundled OULAD Lite cohort.
+Uploaded data is held only in server memory, expires after 30 minutes of inactivity, and is isolated by an opaque HTTP-only session cookie. It is never included in the Groq planning prompt. Resetting returns only that browser session to the bundled curated OULAD cohort.
 
 ## Deployment controls
 
@@ -70,4 +70,4 @@ The repository includes a GitHub Actions workflow that runs the backend tests, b
 3. Enter `GROQ_API_KEY` when Render prompts for the `sync: false` secret. Never commit this value.
 4. Deploy the Blueprint and confirm `/api/health` returns `{"status":"ok", ...}`.
 
-The default `free` Render instance can spin down when idle. Uploaded CSV datasets are intentionally held in memory only and are lost when a process restarts; the bundled OULAD Lite cohort remains available from the immutable container image.
+The default `free` Render instance can spin down when idle. Uploaded CSV datasets are intentionally held in memory only and are lost when a process restarts; the bundled curated OULAD cohort remains available from the immutable container image.

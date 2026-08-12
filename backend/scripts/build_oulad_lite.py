@@ -25,7 +25,7 @@ def main() -> None:
         frame.to_csv(TARGET / f"{name}.csv", index=False)
     dataset_version = dataset_fingerprint(frames)
     manifest = {
-        "dataset_name": "OULAD Lite",
+        "dataset_name": "OULAD (curated 750-learner cohort)",
         "dataset_version": dataset_version,
         "selection_seed": 42,
         "selection_policy": "stratified learners with at least two module-presentation histories",

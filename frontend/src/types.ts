@@ -96,13 +96,16 @@ export interface Recommendation {
   course_code: string;
   course_name: string;
   score: number;
-  confidence: string;
+  evidence_strength: "Limited" | "Moderate" | "Strong";
   reasons: string[];
   requirement_fit: number;
   performance_fit: number;
   progression_fit: number;
-  requirement_type: string;
-  prerequisites_met: string[];
+  course_pass_rate: number;
+  course_withdrawal_rate: number;
+  course_average_grade: number;
+  historical_records: number;
+  success_basis: string;
   narrative: string | null;
   predicted_success_probability: number | null;
 }

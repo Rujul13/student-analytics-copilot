@@ -1,6 +1,6 @@
 {
-  "dataset_name": "OULAD Lite",
-  "dataset_version": "47871e2e9ece",
+  "dataset_name": "OULAD (curated 750-learner cohort)",
+  "dataset_version": "0454c899d3b7",
   "selection_seed": 42,
   "selection_policy": "stratified learners with at least two module-presentation histories",
   "source_archive_sha256": "F2ED1902616C1FE8D2824D872C0B7D2D72BE435BF0124D077044FE4BE2C6D3E4",
@@ -8,7 +8,7 @@
   "license": "CC BY 4.0",
   "tables": {
     "students": 750,
-    "courses": 12,
+    "courses": 7,
     "enrollments": 1548,
     "grades": 1182
   },

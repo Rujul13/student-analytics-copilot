@@ -135,6 +135,7 @@ h2 { font-size: 22px; }
 .evidence-row span { background: #f6f7fb; border-radius: 7px; padding: 5px 7px; font-size: 9px; color: #3d4862; }
 .evidence-row small { display: block; color: #929bad; text-transform: capitalize; font-size: 7px; margin-bottom: 1px; }
 details { margin-top: 18px; color: var(--muted); font-size: 11px; } details summary { color: #47526c; font-weight: 700; cursor: pointer; } details li { margin: 6px 0; }
+.calculation-details { opacity: .78; }.calculation-details summary small { font-weight: 500; color: #9098aa; }
 .query-box { border: 1px solid #cfd6e5; padding: 7px 7px 7px 16px; border-radius: 13px; display: flex; gap: 8px; box-shadow: 0 6px 22px rgba(27,42,76,.08); }
 .query-box:focus-within { border-color: var(--blue); }
 .query-box input { border: 0; outline: 0; flex: 1; min-width: 0; color: var(--ink); }
@@ -146,6 +147,8 @@ details { margin-top: 18px; color: var(--muted); font-size: 11px; } details summ
 .student-list { padding: 13px; max-height: 700px; overflow: hidden; }
 .search-box { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; color: #929aad; margin-bottom: 9px; }
 .search-box input { border: 0; outline: 0; width: 100%; font-size: 12px; }
+.priority-filter { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 3px 5px; color: #536078; font-size: 9px; font-weight: 700; }.priority-filter select { border: 1px solid var(--line); border-radius: 7px; background: white; padding: 5px 7px; color: var(--ink); font-size: 9px; }
+.priority-help { margin: 2px 3px 9px; color: var(--muted); font-size: 8px; line-height: 1.4; }
 .student-items { overflow: auto; max-height: 615px; }
 .student-items button { width: 100%; background: transparent; border: 0; border-radius: 11px; padding: 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 10px; text-align: left; align-items: center; color: var(--ink); }
 .student-items button:hover, .student-items button.selected { background: #f0f3ff; }
@@ -164,6 +167,8 @@ details { margin-top: 18px; color: var(--muted); font-size: 11px; } details summ
 .course-top { display: flex; justify-content: space-between; position: relative; }.course-top > span { color: var(--blue); background: #edf0ff; font-size: 10px; padding: 5px 8px; height: max-content; border-radius: 6px; font-weight: 800; }.course-top div { display: flex; align-items: baseline; }.course-top strong { font: 800 23px Manrope; }.course-top small { font-size: 8px; color: var(--muted); }
 .recommendation-card h3 { font-size: 17px; margin: 15px 0 8px; position: relative; }.recommendation-card > p { color: var(--muted); font-size: 10px; line-height: 1.5; min-height: 30px; }
 .success-estimate { border: 1px solid #d9e1f4; background: #f7f9fd; border-radius: 9px; padding: 8px 9px; display: grid; grid-template-columns: 1fr auto; align-items: center; margin-top: 11px; }.success-estimate span { color: #61708e; font-size: 8px; font-weight: 700; }.success-estimate strong { color: var(--blue); font: 800 14px Manrope; }.success-estimate small { grid-column: 1 / -1; color: #9aa2b3; font-size: 7px; margin-top: 2px; }
+.recommendation-card > .success-basis { min-height: auto; margin: 8px 0 9px; font-size: 8px; }
+.module-evidence { display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; }.module-evidence span { background: #f5f7fb; border-radius: 7px; padding: 6px; color: #33405b; font-size: 9px; font-weight: 700; }.module-evidence small { display: block; color: var(--muted); font-size: 6px; margin-bottom: 2px; text-transform: uppercase; }
 .score-bars { display: grid; gap: 7px; margin: 17px 0; }.score-bars > div { display: grid; grid-template-columns: 64px 1fr; gap: 7px; align-items: center; }.score-bars span { font-size: 8px; color: var(--muted); }.score-bars i { height: 5px; background: #edf0f5; border-radius: 5px; overflow: hidden; }.score-bars b { display: block; height: 100%; background: var(--aqua); border-radius: 5px; }
 .rationale { margin-top: 4px; }.rationale summary { border: 0; background: transparent; color: var(--blue); padding: 5px 0; display: flex; gap: 4px; align-items: center; font-size: 10px; font-weight: 800; list-style: none; }.rationale summary::-webkit-details-marker { display: none; }.rationale ul { margin: 7px 0 0; padding-left: 15px; color: var(--muted); font-size: 9px; line-height: 1.45; }.rationale li { margin: 4px 0; }
 

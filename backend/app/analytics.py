@@ -54,10 +54,10 @@ def dashboard(
         dataset_version=context.version,
         mode=context.mode,
         metrics=[
-            Metric(label="Students", value=student_count, display=f"{student_count:,}", delta="Active dataset", direction="neutral"),
+            Metric(label="Students", value=student_count, display=f"{student_count:,}", delta="Current cohort", direction="neutral"),
             Metric(label="Average grade", value=round(average_grade, 1), display=f"{average_grade:.1f}%", delta="Across recorded assessments", direction="up"),
             Metric(label="Completion rate", value=round(completion_rate, 1), display=f"{completion_rate:.1f}%", delta="Pass or distinction", direction="up"),
-            Metric(label="High-risk learners", value=high_risk, display=str(high_risk), delta=f"{withdrawal_rate:.1f}% withdrawal rate", direction="down"),
+            Metric(label="High-priority learners", value=high_risk, display=str(high_risk), delta=f"{withdrawal_rate:.1f}% withdrawal rate", direction="down"),
         ],
         outcomes=[DistributionPoint(label=str(label), value=round(count / len(joined) * 100, 1), count=int(count)) for label, count in outcomes.items()] if len(joined) else [],
         modules=[DistributionPoint(label=str(code), value=round(float(row["mean"]), 1), count=int(row["count"])) for code, row in module_rollup.iterrows()],

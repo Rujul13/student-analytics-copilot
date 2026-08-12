@@ -81,8 +81,7 @@ def _context(request: Request) -> DatasetContext:
 
 def _dataset_payload(context: DatasetContext) -> dict:
     uploaded = context.mode.startswith("uploaded")
-    courses = context.frames["courses"]
-    future_courses = int(courses.get("catalog_source", courses["course_code"].map(lambda _: "")).eq("Fictional demo enrichment").sum())
+    future_courses = 0
     return {
         "name": context.name,
         "version": context.version,
@@ -93,9 +92,9 @@ def _dataset_payload(context: DatasetContext) -> dict:
         "license": "User-managed" if uploaded else "CC BY 4.0",
         "excluded": [] if uploaded else ["studentVle.csv", "vle.csv"],
         "enrichment": {
-            "label": "User-provided catalog" if uploaded else "Fictional demo catalog enrichment",
+            "label": "User-provided catalog" if uploaded else "Authentic OULAD module history only",
             "future_courses": future_courses,
-            "program_assignment": "Provided by upload" if uploaded else "Deterministic demo pathway; not an authentic OULAD field",
+            "program_assignment": "Provided by upload" if uploaded else "Not provided by OULAD and not used for recommendations",
         },
     }
 

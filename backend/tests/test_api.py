@@ -14,7 +14,7 @@ def test_public_api_vertical_slice(monkeypatch):
 
         dashboard = client.get("/api/dashboard")
         assert dashboard.status_code == 200
-        assert dashboard.json()["dataset_name"] == "OULAD Lite"
+        assert dashboard.json()["dataset_name"] == "OULAD (curated 750-learner cohort)"
         assert dashboard.json()["metrics"][0]["value"] == 750
 
         filtered_dashboard = client.get("/api/dashboard", params={"course_code": "CCC"})
@@ -25,8 +25,8 @@ def test_public_api_vertical_slice(monkeypatch):
         student = client.get("/api/students").json()[0]
         recommendations = client.get(f"/api/students/{student['student_id']}/recommendations")
         assert recommendations.status_code == 200
-        assert recommendations.json()["capability_mode"] == "graduation-aware"
-        assert recommendations.json()["catalog_label"] == "Fictional demo catalog enrichment"
+        assert recommendations.json()["capability_mode"] == "historical-performance"
+        assert recommendations.json()["catalog_label"] == "OULAD historical modules; future availability unknown"
 
         query = client.post("/api/query", json={"question": "What is the average grade?"})
         assert query.status_code == 200

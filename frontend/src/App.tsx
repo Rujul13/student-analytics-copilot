@@ -36,6 +36,12 @@ function Loading() {
   return <div className="loading"><span /><span /><span /></div>;
 }
 
+function presentationLabel(value: string) {
+  const match = value.match(/^(\d{4})([BJ])$/);
+  if (!match) return value;
+  return `${value} · ${match[2] === "B" ? "February" : "October"} ${match[1]}`;
+}
+
 function BarList({ points, suffix = "%", onSelect }: { points: DashboardData["outcomes"]; suffix?: string; onSelect?: (label: string) => void }) {
   const max = Math.max(...points.map((point) => point.value), 1);
   return (
@@ -64,7 +70,7 @@ function DonutChart({ points, onSelect }: { points: DashboardData["outcomes"]; o
   </div>;
 }
 
-function Overview({ data, dataset, filters, onFilter, onNavigate }: { data: DashboardData; dataset: DatasetInfo | null; filters: DashboardFilters; onFilter: (filters: DashboardFilters) => void; onNavigate: (view: View) => void }) {
+function Overview({ data, dataset, filters, onFilter, onNavigate, onOpenPriority }: { data: DashboardData; dataset: DatasetInfo | null; filters: DashboardFilters; onFilter: (filters: DashboardFilters) => void; onNavigate: (view: View) => void; onOpenPriority: () => void }) {
   const icons = [Users, Gauge, TrendingUp, CircleAlert];
   const highRiskCount = data.risk_bands.find((point) => point.label === "High")?.count ?? 0;
   return (
@@ -93,8 +99,8 @@ function Overview({ data, dataset, filters, onFilter, onNavigate }: { data: Dash
       </section>
 
       <section className="dashboard-filters" aria-label="Dashboard filters">
-        <div><label htmlFor="course-filter">Module</label><select id="course-filter" value={filters.course_code ?? ""} onChange={(event) => onFilter({ ...filters, course_code: event.target.value || undefined })}><option value="">All modules</option>{data.filter_options.courses.map((item) => <option key={item}>{item}</option>)}</select></div>
-        <div><label htmlFor="presentation-filter">Presentation</label><select id="presentation-filter" value={filters.presentation ?? ""} onChange={(event) => onFilter({ ...filters, presentation: event.target.value || undefined })}><option value="">All presentations</option>{data.filter_options.presentations.map((item) => <option key={item}>{item}</option>)}</select></div>
+        <div><label htmlFor="course-filter">Course module</label><select id="course-filter" value={filters.course_code ?? ""} onChange={(event) => onFilter({ ...filters, course_code: event.target.value || undefined })}><option value="">All course modules</option>{data.filter_options.courses.map((item) => <option key={item}>{item}</option>)}</select></div>
+        <div><label htmlFor="presentation-filter">Term <small>(OULAD presentation)</small></label><select id="presentation-filter" value={filters.presentation ?? ""} onChange={(event) => onFilter({ ...filters, presentation: event.target.value || undefined })}><option value="">All terms</option>{data.filter_options.presentations.map((item) => <option key={item} value={item}>{presentationLabel(item)}</option>)}</select></div>
         <div><label htmlFor="outcome-filter">Outcome</label><select id="outcome-filter" value={filters.final_result ?? ""} onChange={(event) => onFilter({ ...filters, final_result: event.target.value || undefined })}><option value="">All outcomes</option>{data.filter_options.outcomes.map((item) => <option key={item}>{item}</option>)}</select></div>
         {Object.values(filters).some(Boolean) && <button onClick={() => onFilter({})}><RotateCcw size={14} /> Clear filters</button>}
       </section>
@@ -111,14 +117,14 @@ function Overview({ data, dataset, filters, onFilter, onNavigate }: { data: Dash
           <BarList points={data.modules} onSelect={(course_code) => onFilter({ ...filters, course_code })} />
         </article>
         <article className="panel">
-          <div className="panel-heading"><div><p className="eyebrow">Learner outcomes</p><h2>Result mix</h2></div><span className="tag">Click to filter</span></div>
+          <div className="panel-heading"><div><p className="eyebrow">Learner outcomes</p><h2>Result mix</h2></div></div>
           <DonutChart points={data.outcomes} onSelect={(final_result) => onFilter({ ...filters, final_result })} />
         </article>
         <article className="panel dark-panel">
           <p className="eyebrow">Priority signal</p>
           <h2>{highRiskCount} {highRiskCount === 1 ? "learner needs" : "learners need"} attention</h2>
-          <p>Risk is calculated from assessment performance and withdrawal history—not protected demographic attributes.</p>
-          <button onClick={() => onNavigate("recommendations")}>Open student explorer <ChevronRight size={17} /></button>
+          <p>Academic-support priority highlights learners with low recorded performance or repeated withdrawals. It is a triage signal, not a judgment.</p>
+          <button onClick={onOpenPriority}>Review high-priority learners <ChevronRight size={17} /></button>
         </article>
       </section>
     </>
@@ -164,8 +170,8 @@ function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
       <div className="orb"><Bot size={34} /></div>
       <p className="eyebrow">Natural-language analytics</p>
       <h1>Ask the dataset.<br />Get the evidence.</h1>
-      <p>Every response is constrained to approved calculations and includes a trace you can audit.</p>
-      <div className={`status-pill ${aiEnabled ? "online" : "offline"}`}><span />{aiEnabled ? "AI explanations enabled" : "Safe analytics mode · API key pending"}</div>
+      <p>Northstar turns your question into a verified calculation, then explains the result in plain language.</p>
+      <div className={`status-pill ${aiEnabled ? "online" : "offline"}`}><span />{aiEnabled ? "AI-assisted analytics enabled" : "Verified analytics · API key pending"}</div>
     </div>
     <div className="conversation-card" aria-label="Analytics conversation">
       <div className="conversation-tools">
@@ -188,7 +194,7 @@ function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
                 <div>{rowEvidence(row).map(([key, value]) => <span key={key}><small>{key.replaceAll("_", " ")}</small>{String(value)}</span>)}</div>
               </div>)}
             </div>}
-            <details><summary>Calculation trace</summary><ol>{message.result.calculation_trace.map((step) => <li key={step}>{step}</li>)}</ol></details>
+            {message.result.calculation_trace.length > 0 && <details className="calculation-details"><summary>How this was calculated <small>(optional)</small></summary><ol>{message.result.calculation_trace.map((step) => <li key={step}>{step}</li>)}</ol></details>}
           </div>
         </article>)}
         {busy && <Loading />}
@@ -202,44 +208,29 @@ function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
   </section>;
 }
 
-function Recommendations({ students }: { students: Student[] }) {
+function Recommendations({ students, initialRisk }: { students: Student[]; initialRisk: Student["risk"] | "All" }) {
   const [search, setSearch] = useState("");
-  const featured = useMemo(() => {
-    const programs = Array.from(new Set(students.map((student) => student.program)));
-    const riskSequence: Student["risk"][] = ["High", "Medium", "Low", "Medium"];
-    const chosen: Student[] = [];
-    const chosenIds = new Set<string>();
-    for (let index = 0; index < 12 && programs.length; index += 1) {
-      const risk = riskSequence[index % riskSequence.length];
-      const program = programs[index % programs.length];
-      const candidate = students.find((student) =>
-        student.risk === risk
-        && student.program === program
-        && student.graded_enrollments > 0
-        && !chosenIds.has(student.student_id));
-      if (candidate) {
-        chosen.push(candidate);
-        chosenIds.add(candidate.student_id);
-      }
-    }
-    for (const student of students) {
-      if (chosen.length >= 12) break;
-      if (student.graded_enrollments > 0 && !chosenIds.has(student.student_id)) {
-        chosen.push(student);
-        chosenIds.add(student.student_id);
-      }
-    }
-    return chosen;
-  }, [students]);
+  const [riskFilter, setRiskFilter] = useState<Student["risk"] | "All">(initialRisk);
+  const featured = useMemo(() => students.filter((student) => student.graded_enrollments > 0).slice(0, 12), [students]);
   const [selected, setSelected] = useState<Student | null>(featured[0] ?? students[0] ?? null);
   const [result, setResult] = useState<RecommendationResponse | null>(null);
-  const filtered = useMemo(() => search.trim()
-    ? students.filter((student) => `${student.display_name} ${student.student_id}`.toLowerCase().includes(search.toLowerCase())).slice(0, 12)
-    : featured, [featured, students, search]);
+  const filtered = useMemo(() => {
+    const source = search.trim() ? students : featured;
+    return source.filter((student) =>
+      (riskFilter === "All" || student.risk === riskFilter)
+      && (!search.trim() || `${student.display_name} ${student.student_id}`.toLowerCase().includes(search.toLowerCase()))
+    ).slice(0, 12);
+  }, [featured, students, search, riskFilter]);
+
+  useEffect(() => { setRiskFilter(initialRisk); }, [initialRisk]);
 
   useEffect(() => {
     if (!selected && featured[0]) setSelected(featured[0]);
   }, [featured, selected]);
+
+  useEffect(() => {
+    if (filtered.length && !filtered.some((student) => student.student_id === selected?.student_id)) setSelected(filtered[0]);
+  }, [filtered, selected]);
 
   useEffect(() => {
     if (!selected) return;
@@ -248,27 +239,29 @@ function Recommendations({ students }: { students: Student[] }) {
   }, [selected]);
 
   return <section>
-    <div className="section-title"><div><p className="eyebrow">Course recommendation engine</p><h1>Plan the next best step.</h1></div><p>Eligibility first. Transparent scoring second. AI explanation last.</p></div>
-    <div className="catalog-disclosure"><CircleAlert size={17} /><span><strong>Data boundary:</strong> learner history, grades, and completed module codes are authentic OULAD records. Program pathways, future courses, names, prerequisites, and offerings are fictional demo enrichment.</span></div>
+    <div className="section-title"><div><p className="eyebrow">Course recommendation engine</p><h1>Explore the next best module.</h1></div><p>Historical outcomes and learner evidence first. AI ranking and explanation last.</p></div>
+    <div className="catalog-disclosure"><CircleAlert size={17} /><span><strong>OULAD evidence boundary:</strong> recommendations use authentic learner histories and module outcomes. OULAD does not contain future availability, prerequisites, degree requirements, or official module titles, so administrators must verify those before acting.</span></div>
     <div className="student-layout">
       <aside className="student-list panel">
         <label className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a learner" /></label>
+        <label className="priority-filter"><span>Academic-support priority</span><select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as Student["risk"] | "All")}><option>All</option><option>High</option><option>Medium</option><option>Low</option></select></label>
+        <p className="priority-help">Support priority, not course suitability. High: average below 50% or 2+ withdrawals. Medium: below 65% or 1 withdrawal. Low: otherwise.</p>
         <div className="student-items">
           {filtered.map((student) => <button className={selected?.student_id === student.student_id ? "selected" : ""} onClick={() => setSelected(student)} key={student.student_id}>
             <span className="avatar">{student.display_name.split(" ").at(-1)?.slice(-2)}</span>
             <span><strong>{student.display_name}</strong><small>{student.student_id} · {student.graded_enrollments ? `${student.average_grade}%` : "No recorded grade"}</small></span>
-            <i className={`risk ${student.risk.toLowerCase()}`}>{student.risk}</i>
+            <i className={`risk ${student.risk.toLowerCase()}`} title={`${student.risk} academic-support priority`}>{student.risk} priority</i>
           </button>)}
         </div>
       </aside>
       <div className="recommendation-space">
         {selected && <div className="student-banner">
-          <div><p className="eyebrow">Selected learner</p><h2>{selected.display_name}</h2><span>{selected.program} · {selected.credits_earned} credits earned · {selected.graded_enrollments} graded module{selected.graded_enrollments === 1 ? "" : "s"}</span></div>
+          <div><p className="eyebrow">Selected learner</p><h2>{selected.display_name}</h2><span>{selected.credits_earned} credits earned · {selected.graded_enrollments} graded module{selected.graded_enrollments === 1 ? "" : "s"} · {selected.withdrawals} withdrawal{selected.withdrawals === 1 ? "" : "s"} · {selected.risk} support priority</span></div>
           <div className="grade-ring"><strong>{selected.graded_enrollments ? selected.average_grade : "—"}</strong><small>{selected.graded_enrollments ? "avg." : "no grade"}</small></div>
         </div>}
         {!result && <Loading />}
         {result && <>
-          <div className="mode-note"><Database size={16} /><span><strong>{result.capability_mode}</strong> recommendation mode · {result.catalog_label} · {result.ranking_mode === "hybrid-llm" ? "LLM reranked verified candidates" : "deterministic ranking"}</span></div>
+          <div className="mode-note"><Database size={16} /><span><strong>Historical-performance recommendation</strong> · {result.catalog_label} · {result.ranking_mode === "hybrid-llm" ? "AI reranked the verified candidates" : "verified deterministic ranking"}</span></div>
           {result.success_model && <div className="model-evaluation"><TrendingUp size={16} /><span><strong>Evaluated success baseline</strong><small>{result.success_model.model_name} · held-out n={result.success_model.test_records} · accuracy {(result.success_model.accuracy * 100).toFixed(1)}% · ROC AUC {result.success_model.roc_auc.toFixed(3)} · Brier {result.success_model.brier_score.toFixed(3)}</small></span></div>}
           <div className="recommendation-grid">
             {result.recommendations.map((item, index) => <article className="recommendation-card" key={item.course_code}>
@@ -276,9 +269,11 @@ function Recommendations({ students }: { students: Student[] }) {
               <div className="course-top"><span>{item.course_code}</span><div><strong>{item.score}</strong><small>/100</small></div></div>
               <h3>{item.course_name}</h3>
               <p>{item.narrative ?? item.reasons[0]}</p>
-              {item.predicted_success_probability !== null && <div className="success-estimate"><span>Evaluated success estimate</span><strong>{item.predicted_success_probability}%</strong><small>Baseline estimate, not a guarantee</small></div>}
+              {item.predicted_success_probability !== null && <div className="success-estimate"><span>Estimated success in {item.course_code}</span><strong>{item.predicted_success_probability}%</strong><small>{item.evidence_strength} evidence · estimate, not a guarantee</small></div>}
+              <p className="success-basis">{item.success_basis}</p>
+              <div className="module-evidence"><span><small>Historical pass</small>{item.course_pass_rate}%</span><span><small>Withdrawal</small>{item.course_withdrawal_rate}%</span><span><small>Avg. grade</small>{item.course_average_grade}%</span></div>
               <div className="score-bars">
-                {[['Requirement', item.requirement_fit], ['Performance', item.performance_fit], ['Progression', item.progression_fit]].map(([label, score]) => <div key={label as string}><span>{label}</span><i><b style={{ width: `${score}%` }} /></i></div>)}
+                {[['Module history', item.requirement_fit], ['Learner fit', item.performance_fit], ['Evidence', item.progression_fit]].map(([label, score]) => <div key={label as string}><span>{label}</span><i><b style={{ width: `${score}%` }} /></i></div>)}
               </div>
               <details className="rationale"><summary>View verified rationale <ChevronRight size={16} /></summary><ul>{item.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></details>
             </article>)}
@@ -386,6 +381,7 @@ export default function App() {
   const [dataset, setDataset] = useState<DatasetInfo | null>(null);
   const [aiEnabled, setAiEnabled] = useState(false);
   const [dashboardFilters, setDashboardFilters] = useState<DashboardFilters>({});
+  const [recommendationRiskFilter, setRecommendationRiskFilter] = useState<Student["risk"] | "All">("All");
   const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
@@ -401,18 +397,18 @@ export default function App() {
     <aside className="sidebar">
       <div className="brand"><div><GraduationCap size={23} /></div><span>Northstar<small>Student intelligence</small></span></div>
       <nav aria-label="Primary navigation">
-        {navItems.map(({ id, label, icon: Icon }) => <button aria-label={label} className={view === id ? "active" : ""} onClick={() => setView(id)} key={id}><Icon size={19} /><span>{label}</span></button>)}
+        {navItems.map(({ id, label, icon: Icon }) => <button aria-label={label} className={view === id ? "active" : ""} onClick={() => { if (id === "recommendations") setRecommendationRiskFilter("All"); setView(id); }} key={id}><Icon size={19} /><span>{label}</span></button>)}
       </nav>
-      <div className="sidebar-foot"><Database size={18} /><span><strong>OULAD Lite</strong><small>{dashboard?.mode ?? "Connecting…"}</small></span></div>
+      <div className="sidebar-foot"><Database size={18} /><span><strong>{dashboard?.dataset_name ?? "Connecting…"}</strong><small>{dashboard?.mode ?? "Loading dataset"}</small></span></div>
     </aside>
     <main>
       <header className="topbar"><div className="mobile-brand"><GraduationCap size={22} /> Northstar</div><div className="dataset-chip"><span className="live-dot" />{dashboard?.dataset_name ?? "Loading dataset"}<small>{dashboard?.dataset_version}</small></div><div className="admin-avatar">RA</div></header>
       <div className="page-content">
         {error && <div className="error-banner"><CircleAlert size={20} />{error}</div>}
         {!error && !dashboard && <Loading />}
-        {dashboard && view === "overview" && <Overview data={dashboard} dataset={dataset} filters={dashboardFilters} onFilter={setDashboardFilters} onNavigate={setView} />}
+        {dashboard && view === "overview" && <Overview data={dashboard} dataset={dataset} filters={dashboardFilters} onFilter={setDashboardFilters} onNavigate={setView} onOpenPriority={() => { setRecommendationRiskFilter("High"); setView("recommendations"); }} />}
         {dashboard && view === "copilot" && <Copilot aiEnabled={aiEnabled} />}
-        {dashboard && view === "recommendations" && <Recommendations students={students} />}
+        {dashboard && view === "recommendations" && <Recommendations students={students} initialRisk={recommendationRiskFilter} />}
         {dashboard && view === "import" && <ImportData dataset={dataset} onActivated={loadData} />}
       </div>
     </main>

@@ -7,17 +7,36 @@ from .models import QueryResponse
 from .repository import DatasetContext
 
 
+def data_availability_answer(question: str) -> str:
+    normalized = question.lower()
+    if any(term in normalized for term in ["professor", "instructor", "faculty", "teacher"]):
+        return "The dataset does not include professor or instructor information, so I cannot determine the best professor objectively."
+    if "weather" in normalized:
+        return "The dataset does not include weather information, so I cannot answer that from the available academic data."
+    return "The available data does not include the fields or a defined metric needed to answer that question objectively."
+
+
 def answer_question(context: DatasetContext, question: str, ai_enabled: bool) -> QueryResponse:
-    """Safe MVP planner: maps supported intents to allowlisted Pandas-backed operations."""
+    """Maps supported questions to verified Pandas-backed operations."""
     normalized = re.sub(r"\s+", " ", question.lower().strip())
-    summary = dashboard(context)
-    learner_match = re.search(r"(?:learner|student)\s+([a-z0-9-]+)", normalized)
+    known_codes = set(map(str, context.frames["enrollments"]["course_code"].dropna().unique()))
+    mentioned_codes = [code for code in sorted(known_codes) if re.search(rf"\b{re.escape(code.lower())}\b", normalized)]
+    if any(term in normalized for term in ["female", " male", "gender", "region", "disability", "age band"]):
+        return QueryResponse(
+            answer="The curated application dataset does not include demographic fields, so I cannot calculate that filtered result.",
+            result_type="unsupported",
+            calculation_trace=["Detected a requested filter that is not present in the application dataset"],
+            ai_used=False,
+        )
+    course_code = mentioned_codes[0] if len(mentioned_codes) == 1 else None
+    summary = dashboard(context, course_code=course_code)
+    learner_match = re.search(r"(?:learner|student)\s+((?:[a-z]+-)?[a-z]*\d[a-z0-9-]*)", normalized)
     if learner_match:
         learner_id = learner_match.group(1)
         learner = next((item for item in students(context) if item.student_id.lower() == learner_id), None)
         if learner and any(phrase in normalized for phrase in ["average", "grade", "risk", "profile"]):
             return QueryResponse(
-                answer=f"{learner.display_name} has a {learner.average_grade:.1f}% average and is classified as {learner.risk} risk.",
+                answer=f"{learner.display_name} has a {learner.average_grade:.1f}% average and a {learner.risk.lower()} academic-support priority.",
                 result_type="table",
                 rows=[learner.model_dump()],
                 calculation_trace=["Matched a scoped learner-profile intent", "Executed an allowlisted learner lookup", f"Dataset version: {context.version}"],
@@ -33,10 +52,20 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
         enrollments = context.frames["enrollments"]
         count = int(enrollments.loc[enrollments["final_result"].eq("Distinction"), "student_id"].nunique())
         return QueryResponse(
-            answer=f"{count} learners have at least one Distinction outcome in the active dataset.",
+            answer=f"{count} learners have at least one Distinction.",
             result_type="metric",
             rows=[{"metric": "Learners with a Distinction", "value": count}],
             calculation_trace=["Matched the distinction metric", "Counted distinct learners with a Distinction outcome", f"Dataset version: {context.version}"],
+            ai_used=False,
+        )
+    if "withdraw" in normalized or "withdrew" in normalized:
+        enrollments = context.frames["enrollments"]
+        count = int(enrollments.loc[enrollments["final_result"].eq("Withdrawn"), "student_id"].nunique())
+        return QueryResponse(
+            answer=f"{count} learners withdrew from at least one course.",
+            result_type="metric",
+            rows=[{"metric": "Learners with a withdrawal", "value": count}],
+            calculation_trace=["Matched the withdrawal metric", "Counted distinct learners with at least one Withdrawn outcome", f"Dataset version: {context.version}"],
             ai_used=False,
         )
     if "fail" in normalized and any(phrase in normalized for phrase in ["more than one", "multiple", "at least two"]):
@@ -67,6 +96,8 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
         )
     metric_map = {
         "average grade": summary.metrics[1],
+        "average student score": summary.metrics[1],
+        "average score": summary.metrics[1],
         "completion rate": summary.metrics[2],
         "how many students": summary.metrics[0],
         "student count": summary.metrics[0],
@@ -76,7 +107,7 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
     for phrase, metric in metric_map.items():
         if phrase in normalized:
             return QueryResponse(
-                answer=f"{metric.label} is {metric.display} for the active dataset.",
+                answer=f"{metric.label} is {metric.display}.",
                 result_type="metric",
                 rows=[{"metric": metric.label, "value": metric.value}],
                 calculation_trace=["Matched a supported metric intent", "Executed an allowlisted aggregate", f"Dataset version: {context.version}"],
@@ -85,15 +116,15 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
     if any(phrase in normalized for phrase in ["at risk", "at-risk", "lowest", "struggling"]):
         rows = [student.model_dump() for student in students(context)[:8]]
         return QueryResponse(
-            answer=f"I found {sum(student['risk'] == 'High' for student in rows)} high-risk learners in the first eight priority records.",
+            answer=f"I found {sum(student['risk'] == 'High' for student in rows)} high-priority learners in the first eight priority records.",
             result_type="table",
             rows=rows,
             calculation_trace=["Matched the risk-ranking intent", "Calculated grade and withdrawal risk", "Sorted by risk band and grade", f"Dataset version: {context.version}"],
             ai_used=False,
         )
     return QueryResponse(
-        answer="That question is outside the current safe query catalog. Try asking about average grade, completion rate, student count, or at-risk learners.",
+        answer=data_availability_answer(question),
         result_type="unsupported",
-        calculation_trace=["No allowlisted intent matched", "No code or SQL was generated"],
+        calculation_trace=["No matching metric or available data field was found"],
         ai_used=False,
     )

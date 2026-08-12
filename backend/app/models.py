@@ -50,13 +50,16 @@ class Recommendation(BaseModel):
     course_code: str
     course_name: str
     score: int = Field(ge=0, le=100)
-    confidence: Literal["High", "Medium", "Low"]
+    evidence_strength: Literal["Limited", "Moderate", "Strong"]
     reasons: list[str]
     requirement_fit: int
     performance_fit: int
     progression_fit: int
-    requirement_type: str
-    prerequisites_met: list[str]
+    course_pass_rate: float
+    course_withdrawal_rate: float
+    course_average_grade: float
+    historical_records: int
+    success_basis: str
     narrative: str | None = None
     predicted_success_probability: float | None = Field(default=None, ge=0, le=100)
 
@@ -73,7 +76,7 @@ class SuccessModelSummary(BaseModel):
 
 class RecommendationResponse(BaseModel):
     student: StudentSummary
-    capability_mode: Literal["performance-only", "graduation-aware"]
+    capability_mode: Literal["performance-only", "historical-performance", "graduation-aware"]
     recommendations: list[Recommendation]
     ai_explanation_enabled: bool
     catalog_label: str

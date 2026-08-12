@@ -64,8 +64,8 @@ flowchart LR
 | Capability retrieval | BM25 over a small semantic capability catalog | Accepted |
 | LLM | Groq using `openai/gpt-oss-20b` | Accepted, provider abstraction recommended |
 | Analytics | Prewritten, allowlisted Pandas calculations | Accepted |
-| Default dataset | Reproducible OULAD Lite cohort | Accepted |
-| Recommendation catalog | Authentic OULAD history plus clearly labeled fictional planning enrichment | Accepted for demo |
+| Default dataset | Reproducible OULAD curated 750-learner cohort | Accepted |
+| Recommendation catalog | Authentic OULAD historical modules only | Accepted; supersedes fictional demo catalog |
 | Recommendation ranking | Deterministic eligibility and scoring, held-out success baseline, bounded LLM reranking | Provisional pending educator validation |
 | Uploaded data | Canonical CSVs, staged and activated atomically per browser session | Accepted for demo |
 | Session state | Process memory, 30-minute inactivity TTL, 64-session cap | Accepted for demo |
@@ -108,7 +108,7 @@ flowchart LR
 
 **Improvement.** Add typed `student_profile` and `student_recommendation` intents that reuse the existing services rather than duplicating their logic.
 
-### ADR-003 - Use OULAD Lite as the bundled dataset
+### ADR-003 - Use a curated OULAD cohort as the bundled dataset
 
 **Status:** Accepted
 
@@ -530,6 +530,22 @@ The discovered gaps have now produced concrete changes: scoped learner-profile a
 3. Introduce read-only governed SQL only alongside a semantic layer, query parser, row-level access control, statement timeout, row limit, and audit logging.
 4. Consider trained recommendation models only after obtaining appropriate historical data, outcome definitions, consent/governance, fairness evaluation, calibration, and drift monitoring.
 
+### ADR-018 - Replace fictional course planning with course-specific OULAD evidence
+
+**Status.** Accepted on 2026-08-11. This supersedes the fictional-catalog portion of ADR-006 and the original recommendation-scoring policy in ADR-009.
+
+**Evidence that triggered the change.** Usability testing showed `NXT` demo courses beside authentic OULAD learners, repeated success probabilities across different candidates, unexplained High/Medium/Low badges, and no clear treatment of learners with little graded evidence. Although disclosures were present, the resulting experience could still be mistaken for real institutional course planning.
+
+**Decision.** The active catalog now contains only authentic OULAD module codes observed in learner histories. Recommendation estimates combine temporal learner evidence with module-specific historical pass rate, withdrawal rate, average grade, sample size, and module identity. The held-out split remains learner-disjoint. Completed and current modules are excluded. Groq may reorder only the exact verified candidates and write explanations from supplied evidence.
+
+**Uncertainty behavior.** Evidence strength is based on the number of graded learner records. Zero or one graded record is `Limited`; two or three is `Moderate`; four or more is `Strong`. Limited-evidence explanations state that the estimate relies mainly on historical module outcomes. Every card exposes module pass rate, withdrawal rate, average grade, record count, and the basis of the estimate.
+
+**Product-language decision.** `OULAD Lite` is renamed in the UI to `OULAD (curated 750-learner cohort)`. `Presentation` is shown as `Term (OULAD presentation)`, with `B` explained as February and `J` as October. Learner risk is labeled `academic-support priority` so it is not confused with course suitability. The calculation trace remains available behind an optional `How this was calculated` disclosure.
+
+**Known boundary.** OULAD does not provide future availability, official module titles, prerequisites, degree requirements, or instructor information. The engine therefore recommends historical module fit, not guaranteed enrollment eligibility. A real institution should replace this boundary with its catalog and degree-audit systems.
+
+**Why guardrails remain.** The product no longer leads with adversarial or “safe catalog” wording. Unsupported questions are answered as missing-data or undefined-metric cases. Structural controls still prevent generated code and unsupported calculations because they protect correctness, not because administrators are presumed malicious.
+
 ## 8. Recommended target architecture after P0 and P1
 
 ```mermaid
@@ -540,7 +556,7 @@ flowchart TD
     SEM -->|"metric/group/risk"| AX["Analytics executor registry"]
     SEM -->|"student_profile"| SP["Student profile service"]
     SEM -->|"student_recommendation"| RS["Recommendation service"]
-    SEM -->|"unsupported"| UNS["Safe capability response"]
+    SEM -->|"unsupported"| UNS["Data-availability response"]
     SEM -->|"provider unavailable"| FB["Scope-aware deterministic fallback"]
     AX --> RESP["Evidence response"]
     SP --> RESP
@@ -585,6 +601,6 @@ For every change, record the decision, evidence, alternatives, consequences, mig
 
 The current architecture is strong for an evidence-first public demonstration. Its most important choices—bounded AI, deterministic Pandas calculations, transparent recommendation rules, canonical data, provenance, and graceful degradation—have already improved correctness and diagnosability.
 
-The application does **not** need a more autonomous agent, generated code, a vector database, or a trained recommendation model next. It needs deeper semantic validation, broader typed intent coverage, better evaluation, and shared durable infrastructure only when the product's usage and data sensitivity require it.
+The application does **not** need a more autonomous agent, generated code, or a vector database next. Its learner-and-module baseline now needs calibration analysis, broader typed intent coverage, educator review, and shared durable infrastructure only when usage and data sensitivity require it.
 
 The immediate goal is therefore not “more AI.” It is to make every supported answer correctly scoped, fully evidenced, and impossible to confuse with a broader cohort result.

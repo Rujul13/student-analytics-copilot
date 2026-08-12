@@ -10,7 +10,7 @@ from llama_index.retrievers.bm25 import BM25Retriever
 from pydantic import BaseModel, ConfigDict, Field
 
 from .analytics import dashboard, students
-from .copilot import answer_question
+from .copilot import answer_question, data_availability_answer
 from .models import QueryResponse
 from .recommendations import recommend
 from .repository import DatasetContext
@@ -19,7 +19,7 @@ from .repository import DatasetContext
 CAPABILITIES = [
     {
         "id": "headline_metric",
-        "text": "Calculate one headline metric: student count, average grade, completion rate, or high-risk learner count.",
+        "text": "Calculate one headline metric: student count, average grade, completion rate, high-priority learner count, distinction count, or learners who withdrew.",
     },
     {
         "id": "student_risk_table",
@@ -58,7 +58,7 @@ class AnalyticsPlan(BaseModel):
     ] = Field(
         description="The one approved executor that can answer the question."
     )
-    metric: Literal["student_count", "average_grade", "completion_rate", "high_risk_count", "distinction_student_count"] | None = Field(
+    metric: Literal["student_count", "average_grade", "completion_rate", "high_risk_count", "distinction_student_count", "withdrawn_student_count"] | None = Field(
         description="Required only for metric intent; otherwise null."
     )
     risk_band: Literal["Low", "Medium", "High"] | None = Field(
@@ -67,6 +67,7 @@ class AnalyticsPlan(BaseModel):
     limit: int | None = Field(ge=1, le=20, description="Requested result count, or null when not applicable.")
     sort_descending: bool | None = Field(description="True for highest or best, false for lowest or worst, or null when not applicable.")
     student_id: str | None = Field(description="Exact learner identifier for profile or recommendation intents; otherwise null.")
+    course_code: str | None = Field(default=None, description="Exact module/course code for a scoped metric or module comparison; otherwise null.")
     minimum_failed_courses: int | None = Field(ge=1, le=20, description="Inclusive failed-course threshold for failure-list questions; otherwise null.")
 
 
@@ -92,7 +93,31 @@ class AnswerNarrative(BaseModel):
 
 
 def execute_plan(context: DatasetContext, question: str, plan: AnalyticsPlan) -> QueryResponse:
-    summary = dashboard(context)
+    known_codes = set(map(str, context.frames["enrollments"]["course_code"].dropna().unique()))
+    normalized_question = question.lower()
+    if any(term in normalized_question for term in ["female", " male", "gender", "region", "disability", "age band"]):
+        return QueryResponse(
+            answer="The curated application dataset does not include demographic fields, so I cannot calculate that filtered result.",
+            result_type="unsupported",
+            calculation_trace=["Detected a requested demographic filter that is not present in the application dataset"],
+            ai_used=True,
+        )
+    mentioned_codes = {code for code in known_codes if code.lower() in normalized_question.split()}
+    if mentioned_codes and plan.course_code not in mentioned_codes:
+        return QueryResponse(
+            answer=f"I recognized the requested course module {sorted(mentioned_codes)[0]}, but the query plan did not preserve that filter, so I did not return an unfiltered result.",
+            result_type="unsupported",
+            calculation_trace=["Detected and preserved the requested course-module scope"],
+            ai_used=True,
+        )
+    if plan.course_code and plan.course_code not in known_codes:
+        return QueryResponse(
+            answer=f"I could not find course module {plan.course_code} in the available data.",
+            result_type="unsupported",
+            calculation_trace=["Validated the requested course module", f"Dataset version: {context.version}"],
+            ai_used=True,
+        )
+    summary = dashboard(context, course_code=plan.course_code)
     limit = plan.limit or 10
     sort_descending = plan.sort_descending if plan.sort_descending is not None else True
     if plan.intent == "metric" and plan.metric:
@@ -102,24 +127,30 @@ def execute_plan(context: DatasetContext, question: str, plan: AnalyticsPlan) ->
             "completion_rate": 2,
             "high_risk_count": 3,
         }
-        if plan.metric == "distinction_student_count":
+        if plan.metric in {"distinction_student_count", "withdrawn_student_count"}:
             enrollments = context.frames["enrollments"]
-            count = int(enrollments.loc[enrollments["final_result"].eq("Distinction"), "student_id"].nunique())
+            outcome = "Distinction" if plan.metric == "distinction_student_count" else "Withdrawn"
+            count = int(enrollments.loc[enrollments["final_result"].eq(outcome), "student_id"].nunique())
+            answer = (
+                f"{count} learners have at least one Distinction."
+                if outcome == "Distinction"
+                else f"{count} learners withdrew from at least one course."
+            )
             return QueryResponse(
-                answer=f"{count} learners have at least one Distinction outcome in the active OULAD Lite cohort.",
+                answer=answer,
                 result_type="metric",
-                rows=[{"metric": "Learners with a Distinction", "value": count}],
+                rows=[{"metric": f"Learners with a {outcome}", "value": count}],
                 calculation_trace=[
                     "LlamaIndex retrieved the relevant metric capability",
-                    "Groq produced validated intent: distinction_student_count",
-                    "The allowlisted Pandas executor counted distinct learners with a Distinction outcome",
+                    f"Groq produced validated intent: {plan.metric}",
+                    f"The verified Pandas executor counted distinct learners with a {outcome} outcome",
                     f"Dataset version: {context.version}",
                 ],
                 ai_used=True,
             )
         metric = summary.metrics[metric_positions[plan.metric]]
         return QueryResponse(
-            answer=f"{metric.label} is {metric.display} for the active OULAD Lite cohort.",
+            answer=f"{metric.label} is {metric.display}.",
             result_type="metric",
             rows=[{"metric": metric.label, "value": metric.value}],
             calculation_trace=[
@@ -211,7 +242,7 @@ def execute_plan(context: DatasetContext, question: str, plan: AnalyticsPlan) ->
                 ai_used=True,
             )
         return QueryResponse(
-            answer=f"{learner.display_name} has a {learner.average_grade:.1f}% average and is classified as {learner.risk} risk.",
+            answer=f"{learner.display_name} has a {learner.average_grade:.1f}% average and a {learner.risk.lower()} academic-support priority.",
             result_type="table",
             rows=[learner.model_dump()],
             calculation_trace=[
@@ -237,7 +268,7 @@ def execute_plan(context: DatasetContext, question: str, plan: AnalyticsPlan) ->
                 "course_code": item.course_code,
                 "course_name": item.course_name,
                 "score": item.score,
-                "confidence": item.confidence,
+                "evidence_strength": item.evidence_strength,
                 "requirement_fit": item.requirement_fit,
                 "performance_fit": item.performance_fit,
                 "progression_fit": item.progression_fit,
@@ -258,9 +289,9 @@ def execute_plan(context: DatasetContext, question: str, plan: AnalyticsPlan) ->
             ai_used=True,
         )
     return QueryResponse(
-        answer="That question is outside the current safe query catalog. Try asking about grades, completion, distinctions, failed courses, learner profiles, module performance, risk, or course recommendations.",
+        answer=data_availability_answer(question),
         result_type="unsupported",
-        calculation_trace=["Groq classified the request outside the approved analytics catalog", "No code or SQL was generated"],
+        calculation_trace=["The planner found no matching metric or available data field"],
         ai_used=True,
     )
 
@@ -301,10 +332,12 @@ class AnalyticsWorkflow(Workflow):
                         "Select only from the retrieved capabilities. Never generate SQL, Python, expressions, column names, or function names. "
                         "Use module_performance for questions comparing courses/modules, including best, highest, lowest, or worst modules. "
                         "Use student_risk_table for lists or rankings of learners. Use metric only for a single headline metric. "
+                        "Preserve an exact module code such as BBB in course_code for metric and module questions. "
                         "Use distinction_student_count for questions asking how many learners earned a distinction. "
+                        "Use withdrawn_student_count for questions asking how many learners withdrew or have a withdrawal. "
                         "Use student_failure_table for failed-course questions; 'more than one' means minimum_failed_courses=2. "
                         "Use student_profile for facts about one learner and student_recommendation for next-course advice about one learner. "
-                        "Never drop a learner identifier or change a scoped learner question into a cohort metric. "
+                        "Never drop a learner identifier or module code, or change a scoped question into a cohort metric. "
                         "Translate a requested result count into limit. Use null for fields that do not apply. "
                         "A request that cannot be answered by the capabilities must be unsupported."
                     ),
@@ -328,7 +361,7 @@ class AnalyticsWorkflow(Workflow):
 
     @step
     async def synthesize(self, ev: VerifiedAnalytics) -> StopEvent:
-        if ev.response.result_type == "unsupported":
+        if ev.response.result_type in {"unsupported", "metric"}:
             return StopEvent(result=ev.response)
         payload = {
             "question": ev.question,
