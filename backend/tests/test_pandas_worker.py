@@ -94,3 +94,55 @@ def test_worker_does_not_mutate_the_caller_dataframe():
     original = FRAMES["enrollments"].copy(deep=True)
     run_pandas_code("enrollments['course_code'] = 'X'\nresult = 1", FRAMES)
     pd.testing.assert_frame_equal(FRAMES["enrollments"], original)
+
+
+# --- Regression tests added after code review found real, demonstrated gaps in the
+# initial implementation (unbounded serialized size, incomplete NumPy/Pandas -> JSON
+# conversion, and a dunder-introspection sandbox escape reachable without an `import`) ---
+
+
+def test_bounds_serialized_size_for_a_single_oversized_row():
+    huge_value_literal = "'x' * 500_000"
+    outcome = run_pandas_code(f"result = {{'note': {huge_value_literal}}}", FRAMES)
+    assert outcome.status == "ok"
+    assert outcome.truncated is True
+    import json
+
+    assert len(json.dumps(outcome.rows, default=str)) <= 200_100
+
+
+def test_bounds_serialized_size_for_many_moderately_sized_rows():
+    code = "result = [{'note': 'x' * 1000} for _ in range(300)]"
+    outcome = run_pandas_code(code, FRAMES, timeout=10.0)
+    assert outcome.status == "ok"
+    assert outcome.truncated is True
+    import json
+
+    assert len(json.dumps(outcome.rows, default=str)) <= 200_100
+
+
+def test_normalizes_timestamp_and_timedelta_and_datetime64_values():
+    code = (
+        "result = {\n"
+        "    'ts': pd.Timestamp('2020-01-01'),\n"
+        "    'delta': pd.Timedelta(days=1),\n"
+        "    'dt64': np.datetime64('2020-01-01'),\n"
+        "}\n"
+    )
+    outcome = run_pandas_code(code, FRAMES)
+    assert outcome.status == "ok"
+    values = {row["key"]: row["value"] for row in outcome.rows}
+    assert values["ts"] == "2020-01-01T00:00:00"
+    assert values["delta"].startswith("P1D")
+    assert values["dt64"].startswith("2020-01-01")
+
+
+def test_worker_independently_rejects_dunder_introspection_without_the_ast_validator():
+    # This code contains no `import` statement and no forbidden builtin name - it is the
+    # classic `().__class__.__bases__[0].__subclasses__()` sandbox-escape family, which a
+    # bare restricted-`__builtins__` dict does not stop on its own. The worker must reject
+    # it independently (see _reject_unsafe_constructs), since this test calls the worker
+    # directly without running it through the separate AST validator first.
+    code = "mods = [c.__module__ for c in ().__class__.__bases__[0].__subclasses__()]\nresult = 'os' in mods"
+    outcome = run_pandas_code(code, FRAMES)
+    assert outcome.status == "error"

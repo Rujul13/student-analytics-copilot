@@ -49,6 +49,8 @@ def _apply_resource_limits() -> None:
 
 
 def _normalize_value(value: Any) -> Any:
+    if value is pd.NaT:
+        return None
     if isinstance(value, np.integer):
         return int(value)
     if isinstance(value, np.floating):
@@ -60,13 +62,20 @@ def _normalize_value(value: Any) -> Any:
         return [_normalize_value(item) for item in value.tolist()]
     if isinstance(value, float) and np.isnan(value):
         return None
-    if isinstance(value, pd.Timestamp):
-        return value.isoformat()
+    if isinstance(value, (pd.Timestamp, np.datetime64)):
+        return pd.Timestamp(value).isoformat()
+    if isinstance(value, (pd.Timedelta, np.timedelta64)):
+        return pd.Timedelta(value).isoformat()
     if isinstance(value, dict):
         return {str(key): _normalize_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_normalize_value(item) for item in value]
-    return value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    # Last-resort fallback for any other Pandas/NumPy extension type (Period, Interval,
+    # Categorical, complex, etc.) not already covered above - stringify rather than let a
+    # raw non-JSON-serializable object reach the multiprocessing Queue or the caller.
+    return str(value)
 
 
 def _normalize_result(result: Any) -> tuple[str, list[dict[str, Any]], bool]:
@@ -100,23 +109,79 @@ def _normalize_result(result: Any) -> tuple[str, list[dict[str, Any]], bool]:
 def _shrink_to_budget(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
     import json
 
-    try:
-        size = len(json.dumps(rows, default=str))
-    except (TypeError, ValueError):
-        return rows[:1], True
-    if size <= MAX_SERIALIZED_BYTES or len(rows) <= 1:
+    if not rows:
         return rows, False
-    return rows[: max(1, len(rows) // 2)], True
+
+    def _serialized_size(candidate: list[dict[str, Any]]) -> int:
+        try:
+            return len(json.dumps(candidate, default=str))
+        except (TypeError, ValueError):
+            return MAX_SERIALIZED_BYTES + 1
+
+    truncated = False
+    while len(rows) > 1 and _serialized_size(rows) > MAX_SERIALIZED_BYTES:
+        rows = rows[: max(1, len(rows) // 2)]
+        truncated = True
+
+    if _serialized_size(rows) > MAX_SERIALIZED_BYTES:
+        # Even a single row is over budget (e.g. one very large string value) - the row
+        # count is already at the floor, so shrink the oversized values within it instead
+        # of returning an unbounded payload.
+        shrunk_row: dict[str, Any] = {}
+        for key, value in rows[0].items():
+            if isinstance(value, str) and len(value) > 500:
+                shrunk_row[key] = value[:500] + "...(truncated)"
+            else:
+                shrunk_row[key] = value
+        rows = [shrunk_row]
+        truncated = True
+
+    return rows, truncated
+
+
+def _is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
+
+
+def _reject_unsafe_constructs(code: str) -> str | None:
+    """A minimal, self-contained static pre-check the worker runs on its own, independent
+    of backend/app/pandas_code_validation.py's full AST validator (this module must not
+    import that one - see Task 3's brief). This exists as defense-in-depth: even if this
+    worker is ever invoked without the upstream validator running first, it still refuses
+    to run code that reaches for imports or dunder attributes - closing the classic
+    `().__class__.__bases__[0].__subclasses__()` sandbox-escape family - inside its own
+    process. It is intentionally narrower than the full validator (imports + dunders only);
+    it is not a replacement for it. Returns a sanitized error message, or None if the code
+    passes this check.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(code, mode="exec")
+    except SyntaxError:
+        return "Generated code is not valid Python"
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return "Import statements are not allowed"
+        if isinstance(node, ast.Name) and _is_dunder(node.id):
+            return f"Disallowed dunder identifier: {node.id}"
+        if isinstance(node, ast.Attribute) and _is_dunder(node.attr):
+            return f"Disallowed dunder attribute: {node.attr}"
+    return None
 
 
 def _worker_entry(code: str, frames: dict[str, pd.DataFrame], result_queue: Any) -> None:
     os.environ.clear()
     _apply_resource_limits()
+    rejection = _reject_unsafe_constructs(code)
+    if rejection is not None:
+        result_queue.put(("error", rejection))
+        return
     try:
         namespace: dict[str, Any] = {"__builtins__": _safe_builtins(), "pd": pd, "np": np}
         namespace.update(frames)
         compiled = compile(code, "<generated_pandas_program>", "exec")
-        exec(compiled, namespace)  # noqa: S102 - namespace is restricted; code is AST-validated upstream
+        exec(compiled, namespace)  # noqa: S102 - namespace is restricted; code is AST-validated upstream and by _reject_unsafe_constructs above
         if "result" not in namespace:
             result_queue.put(("error", "Generated code did not assign a value to `result`"))
             return
