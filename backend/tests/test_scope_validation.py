@@ -100,3 +100,84 @@ def test_verify_scope_preserved_rejects_count_only_rate_question(context):
     code = "result = int(enrollments[(enrollments['course_code']=='CCC') & (enrollments['final_result']=='Withdrawn')].shape[0])"
     error = verify_scope_preserved(scope, code, ["course_code", "final_result"])
     assert error is not None
+
+
+def test_verify_scope_preserved_accepts_boolean_mean_as_a_rate_computation(context):
+    scope = extract_scope("What is the withdrawal rate for CCC?", context)
+    code = "subset = enrollments[enrollments['course_code'] == 'CCC']\nresult = float((subset['final_result'] == 'Withdrawn').mean())"
+    assert verify_scope_preserved(scope, code, ["course_code", "final_result"]) is None
+
+
+def test_wants_rate_is_not_triggered_by_the_word_generate(context):
+    scope = extract_scope("Can you generate a report of the average grade in BBB?", context)
+    assert scope.wants_rate is False
+    code = "result = float(enrollments.merge(grades, on='enrollment_id')[enrollments['course_code']=='BBB']['weighted_grade'].mean())"
+    assert verify_scope_preserved(scope, code, ["course_code", "weighted_grade"]) is None
+
+
+def test_outcome_is_not_extracted_from_an_unrelated_word_containing_it(context):
+    scope = extract_scope("Give me a summary encompassing all learners in BBB", context)
+    assert scope.outcomes == []
+
+
+def test_verify_scope_preserved_rejects_code_dropping_the_requested_outcome(context):
+    scope = extract_scope("How many students passed BBB?", context)
+    assert scope.outcomes == ["Pass"]
+    code = "result = int(enrollments[enrollments['course_code'] == 'BBB'].shape[0])"
+    error = verify_scope_preserved(scope, code, ["course_code"])
+    assert error is not None
+    assert "Pass" in error
+
+
+def test_verify_scope_preserved_accepts_code_that_applies_the_requested_outcome(context):
+    scope = extract_scope("How many students passed BBB?", context)
+    code = "result = int(enrollments[(enrollments['course_code'] == 'BBB') & (enrollments['final_result'] == 'Pass')].shape[0])"
+    assert verify_scope_preserved(scope, code, ["course_code", "final_result"]) is None
+
+
+def test_verify_scope_preserved_rejects_code_ignoring_the_requested_count(context):
+    scope = extract_scope("Which five learners have the lowest grades in CCC?", context)
+    assert scope.requested_count == 5
+    code = (
+        "merged = enrollments.merge(grades, on='enrollment_id', how='left')\n"
+        "result = merged[merged['course_code'] == 'CCC'].sort_values('weighted_grade').head(20)\n"
+    )
+    error = verify_scope_preserved(scope, code, ["course_code", "weighted_grade"])
+    assert error is not None
+    assert "5" in error
+
+
+def test_verify_scope_preserved_accepts_code_that_applies_the_requested_count(context):
+    scope = extract_scope("Which five learners have the lowest grades in CCC?", context)
+    code = (
+        "merged = enrollments.merge(grades, on='enrollment_id', how='left')\n"
+        "result = merged[merged['course_code'] == 'CCC'].sort_values('weighted_grade').head(5)\n"
+    )
+    assert verify_scope_preserved(scope, code, ["course_code", "weighted_grade"]) is None
+
+
+def test_extract_scope_does_not_confuse_a_learner_id_with_its_numeric_prefix():
+    # OULAD IDs are numeric, so a shorter ID can be a literal prefix of a longer one in the
+    # dataset (e.g. OULAD-11391 is a prefix of OULAD-113910). A bare substring check would
+    # incorrectly extract both when only the longer one is named in the question; the `\b`
+    # word-boundary regex must not match between two digits, so it must extract only the one
+    # actually present.
+    frames = {
+        "students": pd.DataFrame(
+            {"student_id": ["OULAD-11391", "OULAD-113910"], "display_name": ["A", "B"], "program": ["P", "P"]}
+        ),
+        "courses": pd.DataFrame({"course_code": ["BBB"], "course_name": ["X"]}),
+        "enrollments": pd.DataFrame(
+            {
+                "enrollment_id": ["E1", "E2"],
+                "student_id": ["OULAD-11391", "OULAD-113910"],
+                "course_code": ["BBB", "BBB"],
+                "presentation": ["2014J", "2014J"],
+                "final_result": ["Pass", "Pass"],
+            }
+        ),
+        "grades": pd.DataFrame({"enrollment_id": ["E1", "E2"], "weighted_grade": [70.0, 80.0]}),
+    }
+    id_collision_context = DatasetContext("Test", "v1", "test", frames)
+    scope = extract_scope("Tell me about learner OULAD-113910.", id_collision_context)
+    assert scope.student_ids == ["OULAD-113910"]
