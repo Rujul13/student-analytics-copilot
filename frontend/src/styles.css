@@ -149,9 +149,13 @@ details { margin-top: 18px; color: var(--muted); font-size: 11px; } details summ
 .search-box input { border: 0; outline: 0; width: 100%; font-size: 12px; }
 .priority-filter { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 3px 5px; color: #536078; font-size: 9px; font-weight: 700; }.priority-filter select { border: 1px solid var(--line); border-radius: 7px; background: white; padding: 5px 7px; color: var(--ink); font-size: 9px; }
 .priority-help { margin: 2px 3px 9px; color: var(--muted); font-size: 8px; line-height: 1.4; }
+.learner-result-count { margin: 0 3px 6px; color: #536078; font-size: 9px; font-weight: 700; }
 .student-items { overflow: auto; max-height: 615px; }
 .student-items button { width: 100%; background: transparent; border: 0; border-radius: 11px; padding: 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 10px; text-align: left; align-items: center; color: var(--ink); }
 .student-items button:hover, .student-items button.selected { background: #f0f3ff; }
+.student-items .load-more-learners { display: block; margin-top: 5px; border: 1px solid var(--line); color: var(--blue); text-align: center; font-size: 9px; font-weight: 800; cursor: pointer; }
+.student-items .load-more-learners:hover { background: #f0f3ff; }
+.no-learners { padding: 22px 10px; color: var(--muted); font-size: 10px; line-height: 1.5; text-align: center; }
 .avatar { width: 35px; height: 35px; background: #e6ebff; color: var(--blue); border-radius: 10px; display: grid; place-items: center; font-size: 10px; font-weight: 800; }
 .student-items button > span:nth-child(2) { display: grid; }.student-items strong { font-size: 11px; }.student-items small { font-size: 9px; color: var(--muted); }
 .risk { font-style: normal; font-size: 8px; text-transform: uppercase; font-weight: 800; padding: 4px 6px; border-radius: 999px; }.risk.high { background: #ffe9e6; color: #bd483d; }.risk.medium { background: #fff2d7; color: #a86a19; }.risk.low { background: #def8ed; color: #188566; }

@@ -223,32 +223,36 @@ function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
 }
 
 function Recommendations({ students, initialRisk }: { students: Student[]; initialRisk: Student["risk"] | "All" }) {
+  const LEARNER_PAGE_SIZE = 50;
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState<Student["risk"] | "All">(initialRisk);
-  const featured = useMemo(() => students.filter((student) => student.graded_enrollments > 0).slice(0, 12), [students]);
-  const [selected, setSelected] = useState<Student | null>(featured[0] ?? students[0] ?? null);
+  const [visibleLearners, setVisibleLearners] = useState(LEARNER_PAGE_SIZE);
+  const [selected, setSelected] = useState<Student | null>(students.find((student) => student.graded_enrollments > 0) ?? students[0] ?? null);
   const [result, setResult] = useState<RecommendationResponse | null>(null);
   const filtered = useMemo(() => {
-    const source = search.trim() ? students : featured;
-    return source.filter((student) =>
+    const normalizedSearch = search.trim().toLowerCase();
+    return students.filter((student) =>
       (riskFilter === "All" || student.risk === riskFilter)
-      && (!search.trim() || `${student.display_name} ${student.student_id}`.toLowerCase().includes(search.toLowerCase()))
-    ).slice(0, 12);
-  }, [featured, students, search, riskFilter]);
+      && (!normalizedSearch || `${student.display_name} ${student.student_id}`.toLowerCase().includes(normalizedSearch))
+    );
+  }, [students, search, riskFilter]);
+  const displayed = useMemo(() => filtered.slice(0, visibleLearners), [filtered, visibleLearners]);
 
   useEffect(() => { setRiskFilter(initialRisk); }, [initialRisk]);
 
-  useEffect(() => {
-    if (!selected && featured[0]) setSelected(featured[0]);
-  }, [featured, selected]);
+  useEffect(() => { setVisibleLearners(LEARNER_PAGE_SIZE); }, [search, riskFilter]);
 
   useEffect(() => {
-    if (filtered.length && !filtered.some((student) => student.student_id === selected?.student_id)) setSelected(filtered[0]);
+    if (!filtered.length) {
+      setSelected(null);
+    } else if (!filtered.some((student) => student.student_id === selected?.student_id)) {
+      setSelected(filtered[0]);
+    }
   }, [filtered, selected]);
 
   useEffect(() => {
-    if (!selected) return;
     setResult(null);
+    if (!selected) return;
     void api.recommendations(selected.student_id).then(setResult);
   }, [selected]);
 
@@ -260,12 +264,17 @@ function Recommendations({ students, initialRisk }: { students: Student[]; initi
         <label className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a learner" /></label>
         <label className="priority-filter"><span>Academic-support priority</span><select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as Student["risk"] | "All")}><option>All</option><option>High</option><option>Medium</option><option>Low</option></select></label>
         <p className="priority-help">Support priority, not course suitability. High: average below 50% or 2+ withdrawals. Medium: below 65% or 1 withdrawal. Low: otherwise.</p>
+        <p className="learner-result-count" aria-live="polite">{filtered.length.toLocaleString()} matching learner{filtered.length === 1 ? "" : "s"}</p>
         <div className="student-items">
-          {filtered.map((student) => <button className={selected?.student_id === student.student_id ? "selected" : ""} onClick={() => setSelected(student)} key={student.student_id}>
+          {displayed.map((student) => <button type="button" className={selected?.student_id === student.student_id ? "selected" : ""} onClick={() => setSelected(student)} key={student.student_id}>
             <span className="avatar">{student.display_name.split(" ").at(-1)?.slice(-2)}</span>
             <span><strong>{student.display_name}</strong><small>{student.student_id} · {student.graded_enrollments ? `${student.average_grade}%` : "No recorded grade"}</small></span>
             <i className={`risk ${student.risk.toLowerCase()}`} title={`${student.risk} academic-support priority`}>{student.risk} priority</i>
           </button>)}
+          {!filtered.length && <p className="no-learners">No learners match this search and priority.</p>}
+          {displayed.length < filtered.length && <button type="button" className="load-more-learners" onClick={() => setVisibleLearners((count) => count + LEARNER_PAGE_SIZE)}>
+            Show more learners ({(filtered.length - displayed.length).toLocaleString()} remaining)
+          </button>}
         </div>
       </aside>
       <div className="recommendation-space">
