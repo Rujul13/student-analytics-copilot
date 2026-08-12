@@ -32,6 +32,9 @@ OUTCOME_TERMS: dict[str, str] = {
     "distinction": "Distinction",
     "fail": "Fail", "failed": "Fail", "failing": "Fail",
     "withdrew": "Withdrawn", "withdrawn": "Withdrawn", "withdrawal": "Withdrawn", "withdraw": "Withdrawn",
+    "graduate": "Graduate", "graduated": "Graduate", "graduation": "Graduate",
+    "dropout": "Dropout", "dropped out": "Dropout",
+    "enrolled": "Enrolled", "enrollment": "Enrolled",
 }
 
 _HIGHEST_TERMS = ("highest", "most", "greatest", "best", "top")
@@ -122,9 +125,18 @@ def extract_scope(question: str, context: DatasetContext) -> ScopeFilters:
         or re.search(r"\bnumber of\s+(?:students|learners)\b", normalized)
     )
     scope.wants_risk = bool(re.search(r"\b(?:risk|academic-support priority|support priority)\b", normalized))
-    scope.missing_fields = sorted(
-        {canonical for term, canonical in DEMOGRAPHIC_TERMS.items() if re.search(rf"\b{re.escape(term)}\b", normalized)}
-    )
+    available_fields = {
+        re.sub(r"[^a-z0-9]+", " ", str(column).lower()).strip()
+        for frame in context.frames.values()
+        for column in frame.columns
+    }
+    requested_fields = {
+        canonical for term, canonical in DEMOGRAPHIC_TERMS.items()
+        if re.search(rf"\b{re.escape(term)}\b", normalized)
+    }
+    scope.missing_fields = sorted(field for field in requested_fields if field not in available_fields)
+    if scope.wants_risk and not context.semantic.capabilities.learner_risk:
+        scope.missing_fields.append("a validated learner-risk metric")
     return scope
 
 

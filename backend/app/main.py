@@ -87,9 +87,9 @@ def _dataset_payload(context: DatasetContext) -> dict:
         "version": context.version,
         "mode": context.mode,
         "tables": {name: len(frame) for name, frame in context.frames.items()},
-        "source": "User-provided CSV upload" if uploaded else "UCI Machine Learning Repository",
-        "doi": None if uploaded else "10.24432/C5KK69",
-        "license": "User-managed" if uploaded else "CC BY 4.0",
+        "source": context.semantic.source or ("User-provided CSV upload" if uploaded else "UCI Machine Learning Repository"),
+        "doi": context.semantic.doi if context.semantic.source else (None if uploaded else "10.24432/C5KK69"),
+        "license": context.semantic.license or ("User-managed" if uploaded else "CC BY 4.0"),
         "excluded": [] if uploaded else ["studentVle.csv", "vle.csv"],
         "storage": "Session-scoped canonical DataFrames" if uploaded else "DuckDB + Zstandard-compressed Parquet",
         "offline_features": [] if uploaded else ["VLE total clicks per module history", "VLE active days per module history"],
@@ -98,6 +98,8 @@ def _dataset_payload(context: DatasetContext) -> dict:
             "future_courses": future_courses,
             "program_assignment": "Provided by upload" if uploaded else "Not provided by OULAD and not used for recommendations",
         },
+        "semantic": context.semantic.to_dict(),
+        "capabilities": context.semantic.to_dict()["capabilities"],
     }
 
 
@@ -190,8 +192,14 @@ def students_endpoint(request: Request) -> list[StudentSummary]:
 
 @app.get("/api/students/{student_id}/recommendations", response_model=RecommendationResponse)
 async def recommendations_endpoint(student_id: str, request: Request) -> RecommendationResponse:
+    context = _context(request)
+    if not context.semantic.capabilities.historical_recommendations:
+        raise HTTPException(
+            status_code=409,
+            detail="Course recommendations are unavailable because the active dataset has no individual course history or course catalog.",
+        )
     try:
-        ranked = recommend(_context(request), student_id)
+        ranked = recommend(context, student_id)
         return await add_ai_explanations(
             ranked,
             request.app.state.settings.groq_api_key,

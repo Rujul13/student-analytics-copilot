@@ -15,6 +15,19 @@ class DistributionPoint(BaseModel):
     label: str
     value: float
     count: int
+    key: str | None = None
+
+
+class DashboardSpecificationModel(BaseModel):
+    dimension_label: str
+    period_label: str
+    outcome_label: str
+    performance_title: str
+    performance_eyebrow: str
+    performance_tag: str
+    outcome_title: str
+    priority_enabled: bool
+    enabled_filters: list[str]
 
 
 class DashboardResponse(BaseModel):
@@ -26,12 +39,14 @@ class DashboardResponse(BaseModel):
     modules: list[DistributionPoint]
     risk_bands: list[DistributionPoint]
     filter_options: "DashboardFilterOptions"
+    specification: DashboardSpecificationModel
 
 
 class DashboardFilterOptions(BaseModel):
     courses: list[str]
     presentations: list[str]
     outcomes: list[str]
+    course_labels: dict[str, str] = Field(default_factory=dict)
 
 
 class StudentSummary(BaseModel):

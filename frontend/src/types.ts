@@ -12,6 +12,7 @@ export interface DistributionPoint {
   label: string;
   value: number;
   count: number;
+  key?: string | null;
 }
 
 export interface DashboardData {
@@ -26,6 +27,18 @@ export interface DashboardData {
     courses: string[];
     presentations: string[];
     outcomes: string[];
+    course_labels: Record<string, string>;
+  };
+  specification: {
+    dimension_label: string;
+    period_label: string;
+    outcome_label: string;
+    performance_title: string;
+    performance_eyebrow: string;
+    performance_tag: string;
+    outcome_title: string;
+    priority_enabled: boolean;
+    enabled_filters: string[];
   };
 }
 
@@ -48,6 +61,26 @@ export interface DatasetInfo {
     label: string;
     future_courses: number;
     program_assignment: string;
+  };
+  capabilities: {
+    learner_identity: boolean;
+    numeric_grades: boolean;
+    academic_outcomes: boolean;
+    terms_or_semesters: boolean;
+    degree_programs: boolean;
+    individual_course_history: boolean;
+    course_catalog: boolean;
+    prerequisites: boolean;
+    graduation_requirements: boolean;
+    natural_language_analytics: boolean;
+    historical_recommendations: boolean;
+    graduation_aware_recommendations: boolean;
+    learner_risk: boolean;
+  };
+  semantic: {
+    adapter_id: string;
+    record_grain: string;
+    dimension_semantics: string;
   };
 }
 
@@ -73,6 +106,7 @@ export interface ImportPreview {
     graduation_aware_recommendations: boolean;
   };
   files: ImportFilePreview[];
+  adapter?: Record<string, unknown>;
 }
 
 export interface ImportMappingSuggestion {
@@ -84,8 +118,11 @@ export interface ImportMappingSuggestion {
   }[];
   ai_used: boolean;
   safe_to_apply: boolean;
-  ingestion_mode: "canonical" | "flexible";
+  ingestion_mode: "canonical" | "flexible" | "semantic-adapter";
   note?: string;
+  adapter_id?: string;
+  adapter_confidence?: number;
+  profiles?: unknown[];
 }
 
 export interface Student {

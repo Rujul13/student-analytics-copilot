@@ -30,6 +30,27 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
     normalized = re.sub(r"\s+", " ", question.lower().strip())
     known_codes = set(map(str, context.frames["enrollments"]["course_code"].dropna().unique()))
     mentioned_codes = [code for code in sorted(known_codes) if re.search(rf"\b{re.escape(code.lower())}\b", normalized)]
+    semantic_outcome_terms = {
+        "dropout": set(context.semantic.failure_outcomes) | set(context.semantic.withdrawal_outcomes),
+        "dropped out": set(context.semantic.failure_outcomes) | set(context.semantic.withdrawal_outcomes),
+        "graduate": set(context.semantic.success_outcomes),
+        "graduated": set(context.semantic.success_outcomes),
+        "graduation": set(context.semantic.success_outcomes),
+        "enrolled": {"Enrolled"},
+    }
+    for term, outcomes in semantic_outcome_terms.items() if not context.semantic.capabilities.individual_course_history else []:
+        if term in normalized and any(phrase in normalized for phrase in ["how many", "number of", "count"]):
+            enrollments = context.frames["enrollments"]
+            count = int(enrollments.loc[enrollments["final_result"].isin(outcomes), "student_id"].nunique())
+            label = "dropped out" if "drop" in term else "graduated" if "graduat" in term else "are enrolled"
+            learner_word = "learner" if count == 1 else "learners"
+            return QueryResponse(
+                answer=f"{count:,} {learner_word} {label}.",
+                result_type="metric",
+                rows=[{"metric": f"Learners who {label}", "value": count}],
+                execution_mode="deterministic-fallback",
+                ai_used=False,
+            )
     if any(term in normalized for term in ["female", " male", "gender", "region", "disability", "age band"]):
         return QueryResponse(
             answer="The curated application dataset does not include demographic fields, so I cannot calculate that filtered result.",

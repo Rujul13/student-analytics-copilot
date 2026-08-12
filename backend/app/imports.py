@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict
 from .repository import DatasetContext
 from .oulad import REQUIRED_FILES as OULAD_REQUIRED_FILES, transform_oulad_dataframes
 from .analytical_store import stage_csv_frames
+from .dataset_adapters import profile_sources, select_adapter
+from .semantic import canonical_metadata
 
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -127,7 +129,9 @@ async def parse_uploads(files: list[UploadFile]) -> list[ParsedUpload]:
         if len(content) > MAX_FILE_BYTES or total_bytes > MAX_TOTAL_BYTES:
             raise ImportValidationError("Upload exceeds the configured size limit")
         try:
-            frame = pd.read_csv(io.BytesIO(content), encoding="utf-8-sig")
+            # Academic CSV exports commonly use comma, semicolon, or tab delimiters.
+            # Python's CSV sniffer (via sep=None) detects the boundary before semantic profiling.
+            frame = pd.read_csv(io.BytesIO(content), encoding="utf-8-sig", sep=None, engine="python")
         except Exception as error:
             raise ImportValidationError(f"{upload.filename} is not a readable UTF-8 CSV") from error
         frame.columns = [str(column).strip() for column in frame.columns]
@@ -201,6 +205,24 @@ def _global_aliases(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _flexible_profile(parsed: list[ParsedUpload]) -> dict:
+    sources = [(item.filename, item.frame) for item in parsed]
+    selected = select_adapter(sources)
+    if selected:
+        _, match = selected
+        return {
+            "mappings": [{
+                "filename": item.filename,
+                "role": "semantic_source",
+                "columns": [],
+                "missing": [],
+            } for item in parsed],
+            "safe_to_apply": True,
+            "ingestion_mode": "semantic-adapter",
+            "adapter_id": match.adapter_id,
+            "adapter_confidence": match.confidence,
+            "note": match.reason + ". A dedicated deterministic adapter will normalize it after confirmation.",
+            "profiles": [profile.to_dict() for profile in profile_sources(sources)],
+        }
     profiled = [_global_aliases(item.frame) for item in parsed]
     enrollment_index = max(
         range(len(profiled)),
@@ -270,7 +292,7 @@ def apply_upload_mappings(parsed: list[ParsedUpload], mapping_json: str | None) 
     if not mapping_json:
         return parsed
     raw = json.loads(mapping_json)
-    if raw.get("ingestion_mode") == "flexible":
+    if raw.get("ingestion_mode") in {"flexible", "semantic-adapter"}:
         return parsed
     bundle = MappingBundle.model_validate({
         "mappings": [
@@ -406,7 +428,19 @@ def _normalize(frames: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame]
 
 def validate_and_build(parsed: list[ParsedUpload]) -> tuple[DatasetContext, list[str]]:
     uploaded_by_name = {item.filename: item.frame for item in parsed}
-    if OULAD_REQUIRED_FILES.issubset(uploaded_by_name):
+    selected_adapter = select_adapter([(item.filename, item.frame) for item in parsed])
+    adapter_metadata = None
+    dataset_name = "Uploaded Canonical Dataset"
+    if selected_adapter:
+        adapter, _ = selected_adapter
+        adapted = adapter.transform([(item.filename, item.frame) for item in parsed])
+        raw_frames = adapted.frames
+        flexible_warnings = adapted.warnings
+        adapter_metadata = adapted.metadata
+        dataset_name = adapted.dataset_name
+        roles = []
+        missing_roles = []
+    elif OULAD_REQUIRED_FILES.issubset(uploaded_by_name):
         raw_frames = transform_oulad_dataframes(
             uploaded_by_name["studentInfo.csv"],
             uploaded_by_name["studentRegistration.csv"],
@@ -420,17 +454,18 @@ def validate_and_build(parsed: list[ParsedUpload]) -> tuple[DatasetContext, list
         flexible_warnings = ["The official OULAD package was recognized and normalized into the four canonical tables."]
     else:
         raw_frames = None
-    roles = [item.role for item in parsed if item.role]
-    if len(set(roles)) != len(roles):
-        raise ImportValidationError("Two files were detected as the same canonical table")
-    missing_roles = sorted(set(ROLE_COLUMNS) - set(roles))
-    flexible_warnings = flexible_warnings if raw_frames is not None else []
-    if raw_frames is not None:
-        pass
-    elif missing_roles:
-        raw_frames, flexible_warnings = _flexible_frames(parsed)
-    else:
-        raw_frames = {item.role: item.frame for item in parsed if item.role}
+    if not selected_adapter:
+        roles = [item.role for item in parsed if item.role]
+        if len(set(roles)) != len(roles):
+            raise ImportValidationError("Two files were detected as the same canonical table")
+        missing_roles = sorted(set(ROLE_COLUMNS) - set(roles))
+        flexible_warnings = flexible_warnings if raw_frames is not None else []
+        if raw_frames is not None:
+            pass
+        elif missing_roles:
+            raw_frames, flexible_warnings = _flexible_frames(parsed)
+        else:
+            raw_frames = {item.role: item.frame for item in parsed if item.role}
     frames, enriched = _normalize(raw_frames)
 
     for role, frame in frames.items():
@@ -458,9 +493,10 @@ def validate_and_build(parsed: list[ParsedUpload]) -> tuple[DatasetContext, list
     for role in sorted(frames):
         digest.update(pd.util.hash_pandas_object(frames[role], index=True).values.tobytes())
     version = digest.hexdigest()[:12]
-    mode = "uploaded-enriched" if enriched else "uploaded-canonical"
-    warnings = flexible_warnings + ([] if enriched else ["No prerequisite/program enrichment was detected; recommendations will use historical-performance mode."])
-    return DatasetContext("Uploaded Canonical Dataset", version, mode, frames), warnings
+    mode = "uploaded-semantic" if adapter_metadata else ("uploaded-enriched" if enriched else "uploaded-canonical")
+    warnings = flexible_warnings + ([] if enriched or adapter_metadata else ["No prerequisite/program enrichment was detected; recommendations will use historical-performance mode."])
+    semantic = adapter_metadata or canonical_metadata(graduation_aware=enriched, adapter_id="uploaded-canonical")
+    return DatasetContext(dataset_name, version, mode, frames, semantic), warnings
 
 
 def preview_payload(parsed: list[ParsedUpload], token: str, context: DatasetContext, warnings: list[str]) -> dict:
@@ -473,10 +509,11 @@ def preview_payload(parsed: list[ParsedUpload], token: str, context: DatasetCont
         "warnings": warnings,
         "capabilities": {
             "dashboard": True,
-            "natural_language_analytics": True,
-            "historical_recommendations": True,
-            "graduation_aware_recommendations": context.mode == "uploaded-enriched",
+            "natural_language_analytics": context.semantic.capabilities.natural_language_analytics,
+            "historical_recommendations": context.semantic.capabilities.historical_recommendations,
+            "graduation_aware_recommendations": context.semantic.capabilities.graduation_aware_recommendations,
         },
+        "adapter": context.semantic.to_dict(),
         "files": [
             {
                 "filename": item.filename,

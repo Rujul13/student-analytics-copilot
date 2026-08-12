@@ -51,6 +51,8 @@ def _evidence_strength(graded_enrollments: int) -> str:
 
 
 def recommend(context: DatasetContext, student_id: str, limit: int | None = None) -> RecommendationResponse:
+    if not context.semantic.capabilities.historical_recommendations:
+        raise ValueError("The active dataset does not support individual course recommendations")
     student_map = {student.student_id: student for student in students(context)}
     if student_id not in student_map:
         raise KeyError(student_id)
@@ -60,7 +62,9 @@ def recommend(context: DatasetContext, student_id: str, limit: int | None = None
     historical_codes = set(map(str, context.frames["enrollments"]["course_code"].dropna().unique()))
     candidates: list[Recommendation] = []
     success_model = get_success_model(context)
-    graduation_aware = context.mode == "uploaded-enriched"
+    # Preserve compatibility for callers constructing an enriched DatasetContext
+    # directly while making the semantic manifest authoritative for imported data.
+    graduation_aware = context.semantic.capabilities.graduation_aware_recommendations or context.mode == "uploaded-enriched"
 
     for row in catalog.itertuples():
         prerequisites = split_codes(getattr(row, "prerequisites", ""))

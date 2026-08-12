@@ -660,4 +660,20 @@ The application does **not** need a more autonomous loop or a vector database ne
 
 **Why.** PostgreSQL would not improve the current read-heavy OULAD computations and would add migrations, connections, and another failure domain. Render's free PostgreSQL expires after 30 days, whereas immutable Parquet artifacts deploy with the application.
 
+### ADR-031 - Drive product behavior from a verified semantic capability manifest
+
+**Status.** Accepted on 2026-08-12.
+
+**Decision.** Every `DatasetContext` carries immutable semantic metadata describing the adapter, record grain, analytical dimension, outcome meanings, table descriptions, supported capabilities, and dashboard specification. A registry selects high-confidence known adapters before generic column normalization. DuckDB profiles uploaded tables, while the LLM may propose mappings from bounded metadata; deterministic adapter code remains responsible for transformation and validation. Product consumers do not infer capabilities independently: the dashboard selects tested metrics, filters, labels, and visualizations from the manifest; the Pandas agent receives the same grain and definitions; and recommendation endpoints are unavailable unless individual course history is verified.
+
+**First dedicated adapter.** The Kaggle/UCI Predict Students' Dropout and Academic Success adapter recognizes its 37-column single-file schema. It treats `Course` as one of 17 degree programs, generates session-scoped learner identifiers because the source has none, preserves profile columns, models one aggregate two-semester record per learner, converts 0-20 grades to percentages, and excludes semester grades where no curricular unit was approved. It never constructs fictional individual courses.
+
+**Why.** Renaming arbitrary columns into `students`, `courses`, `enrollments`, and `grades` can create technically valid but semantically false analytics. A capability contract lets heterogeneous datasets change the interface without allowing an LLM to generate new frontend code or invent relationships.
+
+**Verified result.** Against all 4,424 authoritative rows, the adapter recognized 17 programs and 3,748 records with graded evidence; outcomes were 2,209 Graduate, 1,421 Dropout, and 794 Enrolled. Known-answer dashboard results were 63.5% recorded-grade average, 49.9% graduation rate, and 32.1% dropout rate. The course recommender was correctly unavailable.
+
+**Trade-off.** New dataset families require either a dedicated adapter or a confirmed generic mapping. Dynamic behavior is limited to a tested widget and metric registry rather than arbitrary generated dashboards. This costs more engineering per genuinely different grain but prevents silent reinterpretation.
+
+**Next adapters.** Add adapter contracts for learning-management-system assessment exports and linked institutional course catalogs. Add persisted mapping templates after authentication and durable storage are introduced.
+
 The immediate goal is to make every answer correctly scoped, fully evidenced, and impossible to confuse with a broader cohort result—even when the generated program is syntactically valid.

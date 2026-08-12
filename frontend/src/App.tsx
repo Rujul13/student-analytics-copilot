@@ -42,12 +42,12 @@ function presentationLabel(value: string) {
   return `${value} · ${match[2] === "B" ? "February" : "October"} ${match[1]}`;
 }
 
-function BarList({ points, suffix = "%", onSelect }: { points: DashboardData["outcomes"]; suffix?: string; onSelect?: (label: string) => void }) {
+function BarList({ points, suffix = "%", onSelect }: { points: DashboardData["outcomes"]; suffix?: string; onSelect?: (key: string) => void }) {
   const max = Math.max(...points.map((point) => point.value), 1);
   return (
     <div className="bar-list">
       {points.map((point) => (
-        <button className={`bar-row ${onSelect ? "selectable" : ""}`} key={point.label} onClick={() => onSelect?.(point.label)} disabled={!onSelect}>
+        <button className={`bar-row ${onSelect ? "selectable" : ""}`} key={point.key ?? point.label} onClick={() => onSelect?.(point.key ?? point.label)} disabled={!onSelect}>
           <div className="bar-meta"><span>{point.label}</span><strong>{point.value}{suffix}</strong></div>
           <div className="bar-track"><span style={{ width: `${(point.value / max) * 100}%` }} /></div>
           <small>{point.count} records</small>
@@ -99,9 +99,9 @@ function Overview({ data, dataset, filters, onFilter, onNavigate, onOpenPriority
       </section>
 
       <section className="dashboard-filters" aria-label="Dashboard filters">
-        <div><label htmlFor="course-filter">Course module</label><select id="course-filter" value={filters.course_code ?? ""} onChange={(event) => onFilter({ ...filters, course_code: event.target.value || undefined })}><option value="">All course modules</option>{data.filter_options.courses.map((item) => <option key={item}>{item}</option>)}</select></div>
-        <div><label htmlFor="presentation-filter">Term <small>(OULAD presentation)</small></label><select id="presentation-filter" value={filters.presentation ?? ""} onChange={(event) => onFilter({ ...filters, presentation: event.target.value || undefined })}><option value="">All terms</option>{data.filter_options.presentations.map((item) => <option key={item} value={item}>{presentationLabel(item)}</option>)}</select></div>
-        <div><label htmlFor="outcome-filter">Outcome</label><select id="outcome-filter" value={filters.final_result ?? ""} onChange={(event) => onFilter({ ...filters, final_result: event.target.value || undefined })}><option value="">All outcomes</option>{data.filter_options.outcomes.map((item) => <option key={item}>{item}</option>)}</select></div>
+        {data.specification.enabled_filters.includes("course_code") && <div><label htmlFor="course-filter">{data.specification.dimension_label}</label><select id="course-filter" value={filters.course_code ?? ""} onChange={(event) => onFilter({ ...filters, course_code: event.target.value || undefined })}><option value="">All {data.specification.dimension_label.toLowerCase()}s</option>{data.filter_options.courses.map((item) => <option key={item} value={item}>{data.filter_options.course_labels[item] ?? item}</option>)}</select></div>}
+        {data.specification.enabled_filters.includes("presentation") && <div><label htmlFor="presentation-filter">{data.specification.period_label}</label><select id="presentation-filter" value={filters.presentation ?? ""} onChange={(event) => onFilter({ ...filters, presentation: event.target.value || undefined })}><option value="">All terms</option>{data.filter_options.presentations.map((item) => <option key={item} value={item}>{presentationLabel(item)}</option>)}</select></div>}
+        {data.specification.enabled_filters.includes("final_result") && <div><label htmlFor="outcome-filter">{data.specification.outcome_label}</label><select id="outcome-filter" value={filters.final_result ?? ""} onChange={(event) => onFilter({ ...filters, final_result: event.target.value || undefined })}><option value="">All outcomes</option>{data.filter_options.outcomes.map((item) => <option key={item}>{item}</option>)}</select></div>}
         {Object.values(filters).some(Boolean) && <button onClick={() => onFilter({})}><RotateCcw size={14} /> Clear filters</button>}
       </section>
 
@@ -113,29 +113,34 @@ function Overview({ data, dataset, filters, onFilter, onNavigate, onOpenPriority
 
       <section className="content-grid">
         <article className="panel wide">
-          <div className="panel-heading"><div><p className="eyebrow">Academic performance</p><h2>Module pulse</h2></div><span className="tag">Average grade</span></div>
+          <div className="panel-heading"><div><p className="eyebrow">{data.specification.performance_eyebrow}</p><h2>{data.specification.performance_title}</h2></div><span className="tag">{data.specification.performance_tag}</span></div>
           <BarList points={data.modules} onSelect={(course_code) => onFilter({ ...filters, course_code })} />
         </article>
         <article className="panel">
-          <div className="panel-heading"><div><p className="eyebrow">Learner outcomes</p><h2>Result mix</h2></div></div>
+          <div className="panel-heading"><div><p className="eyebrow">Learner outcomes</p><h2>{data.specification.outcome_title}</h2></div></div>
           <DonutChart points={data.outcomes} onSelect={(final_result) => onFilter({ ...filters, final_result })} />
         </article>
-        <article className="panel dark-panel">
+        {data.specification.priority_enabled && <article className="panel dark-panel">
           <p className="eyebrow">Priority signal</p>
           <h2>{highRiskCount} {highRiskCount === 1 ? "learner needs" : "learners need"} attention</h2>
           <p>Academic-support priority highlights learners with low recorded performance or repeated withdrawals. It is a triage signal, not a judgment.</p>
           <button onClick={onOpenPriority}>Review high-priority learners <ChevronRight size={17} /></button>
-        </article>
+        </article>}
       </section>
     </>
   );
 }
 
-function Copilot({ aiEnabled }: { aiEnabled: boolean }) {
-  const suggestions = [
+function Copilot({ aiEnabled, dataset }: { aiEnabled: boolean; dataset: DatasetInfo | null }) {
+  const courseHistoryAvailable = dataset?.capabilities.individual_course_history !== false;
+  const suggestions = courseHistoryAvailable ? [
     "How many learners earned a distinction?",
     "Which modules have the lowest average grades?",
     "Which students failed more than one class?",
+  ] : [
+    "How many students dropped out?",
+    "Which degree programs have the lowest average grades?",
+    "How many students graduated?",
   ];
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<{ id: number; question: string; result: QueryResponse }[]>([]);
@@ -379,14 +384,14 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
         {preview?.warnings.map((warning) => <div className="warning-banner" key={warning}><CircleAlert size={18} />{warning}</div>)}
         {mapping && <div className="mapping-review">
           <div className="mapping-head"><div><Sparkles size={17} /><span><strong>{mapping.ai_used ? "AI-assisted normalization plan" : "Deterministic normalization plan"}</strong><small>{mapping.note ?? "Only filenames and column headers were analyzed. Review before applying."}</small></span></div><i>{mapping.safe_to_apply ? "Ready for confirmation" : "Missing academic identity or outcomes"}</i></div>
-          {mapping.mappings.map((file) => <div className="mapping-file" key={file.filename}><div><strong>{file.filename}</strong><span>{file.role}</span></div><p>{file.columns.map((column) => `${column.source} → ${column.target}`).join(" · ") || "No confident mappings"}</p>{file.missing.length > 0 && <small>Missing: {file.missing.join(", ")}</small>}</div>)}
+          {mapping.mappings.map((file) => <div className="mapping-file" key={file.filename}><div><strong>{file.filename}</strong><span>{file.role}</span></div><p>{file.columns.map((column) => `${column.source} → ${column.target}`).join(" · ") || (mapping.ingestion_mode === "semantic-adapter" ? `Dedicated ${mapping.adapter_id} transformation` : "No confident mappings")}</p>{file.missing.length > 0 && <small>Missing: {file.missing.join(", ")}</small>}</div>)}
         </div>}
-        {activated && <div className="success-banner"><FileCheck2 size={19} />Dataset activated for this browser session. Dashboard, Copilot, and recommendations now use version {preview?.dataset_version}.</div>}
+        {activated && <div className="success-banner"><FileCheck2 size={19} />Dataset activated for this browser session. Dashboard and Copilot now use version {preview?.dataset_version}{preview?.capabilities.historical_recommendations ? "; course planning is also available." : "; course planning is hidden because individual course history is unavailable."}</div>}
         {preview && !activated && <div className="preview-table">
           <div className="preview-head"><strong>Validation report</strong><span>{preview.mode}</span></div>
           {preview.files.map((file) => <div key={file.filename}><span>{file.filename}</span><strong>{file.role}</strong><small>{file.rows.toLocaleString()} rows · {file.columns.length} columns</small></div>)}
         </div>}
-        {preview && <div className="capability-report"><strong>Available after activation</strong><span>Dashboard ✓</span><span>Natural-language analytics ✓</span><span>Historical recommendations ✓</span><span>Graduation-aware planning {preview.capabilities.graduation_aware_recommendations ? "✓" : "— needs requirements data"}</span></div>}
+        {preview && <div className="capability-report"><strong>Available after activation</strong><span>Dashboard ✓</span><span>Natural-language analytics {preview.capabilities.natural_language_analytics ? "✓" : "—"}</span><span>Historical recommendations {preview.capabilities.historical_recommendations ? "✓" : "— no individual course history"}</span><span>Graduation-aware planning {preview.capabilities.graduation_aware_recommendations ? "✓" : "— needs catalog and requirements data"}</span></div>}
         <div className="import-actions">
           <p>{preview ? activated ? "This dataset is active only for the current browser session." : "Preview is valid for 10 minutes. Your active dataset has not changed yet." : <>Uploads remain in memory only and are never sent to Groq. <a href="/api/import/templates">Download starter templates</a></>}</p>
           {!mapping && !preview && <button className="primary" disabled={busy || files.length === 0} onClick={() => void analyzeMapping()}>{busy ? "Analyzing…" : "Analyze & normalize"}<Sparkles size={16} /></button>}
@@ -421,7 +426,7 @@ export default function App() {
     <aside className="sidebar">
       <div className="brand"><div><GraduationCap size={23} /></div><span>Northstar<small>Student intelligence</small></span></div>
       <nav aria-label="Primary navigation">
-        {navItems.map(({ id, label, icon: Icon }) => <button aria-label={label} className={view === id ? "active" : ""} onClick={() => { if (id === "recommendations") setRecommendationRiskFilter("All"); setView(id); }} key={id}><Icon size={19} /><span>{label}</span></button>)}
+        {navItems.filter((item) => item.id !== "recommendations" || dataset?.capabilities.historical_recommendations !== false).map(({ id, label, icon: Icon }) => <button aria-label={label} className={view === id ? "active" : ""} onClick={() => { if (id === "recommendations") setRecommendationRiskFilter("All"); setView(id); }} key={id}><Icon size={19} /><span>{label}</span></button>)}
       </nav>
       <div className="sidebar-foot"><Database size={18} /><span><strong>{dashboard?.dataset_name ?? "Connecting…"}</strong><small>{dashboard?.mode ?? "Loading dataset"}</small></span></div>
     </aside>
@@ -431,7 +436,7 @@ export default function App() {
         {error && <div className="error-banner"><CircleAlert size={20} />{error}</div>}
         {!error && !dashboard && <Loading />}
         {dashboard && view === "overview" && <Overview data={dashboard} dataset={dataset} filters={dashboardFilters} onFilter={setDashboardFilters} onNavigate={setView} onOpenPriority={() => { setRecommendationRiskFilter("High"); setView("recommendations"); }} />}
-        {dashboard && view === "copilot" && <Copilot aiEnabled={aiEnabled} />}
+        {dashboard && view === "copilot" && <Copilot aiEnabled={aiEnabled} dataset={dataset} />}
         {dashboard && view === "recommendations" && <Recommendations students={students} initialRisk={recommendationRiskFilter} />}
         {dashboard && view === "import" && <ImportData dataset={dataset} onActivated={loadData} />}
       </div>

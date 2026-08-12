@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -12,6 +12,7 @@ from .catalog import apply_catalog_enrichment
 from .fixture import build_development_fixture
 from .oulad import transform_oulad
 from .analytical_store import has_parquet_dataset, read_parquet_dataset
+from .semantic import SemanticMetadata, canonical_metadata, oulad_metadata
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class DatasetContext:
     version: str
     mode: str
     frames: dict[str, pd.DataFrame]
+    semantic: SemanticMetadata = field(default_factory=canonical_metadata)
 
 
 def dataset_fingerprint(frames: dict[str, pd.DataFrame]) -> str:
@@ -33,7 +35,7 @@ def dataset_fingerprint(frames: dict[str, pd.DataFrame]) -> str:
 def load_dataset(settings: Settings) -> DatasetContext:
     if settings.dataset_path == "fixture":
         frames = apply_catalog_enrichment(build_development_fixture())
-        return DatasetContext("OULAD development fixture", "fixture-v1-seed-42", "development-fixture", frames)
+        return DatasetContext("OULAD development fixture", "fixture-v1-seed-42", "development-fixture", frames, oulad_metadata())
     bundled_source = Path(__file__).resolve().parents[1] / "data" / "oulad"
     full_processed_source = Path(__file__).resolve().parents[1] / "data" / "full_processed"
     processed_source = Path(__file__).resolve().parents[1] / "data" / "processed"
@@ -41,11 +43,11 @@ def load_dataset(settings: Settings) -> DatasetContext:
     if not settings.dataset_path and has_parquet_dataset(full_processed_source):
         frames = apply_catalog_enrichment(read_parquet_dataset(full_processed_source))
         manifest = json.loads((full_processed_source / "manifest.json").read_text(encoding="utf-8"))
-        return DatasetContext(manifest["dataset_name"], manifest["dataset_version"], "full-parquet", frames)
+        return DatasetContext(manifest["dataset_name"], manifest["dataset_version"], "full-parquet", frames, oulad_metadata())
     if source.exists() and all((source / name).exists() for name in ["studentInfo.csv", "studentRegistration.csv", "courses.csv", "assessments.csv", "studentAssessment.csv"]):
         frames = apply_catalog_enrichment(transform_oulad(source, limit_students=None))
         fingerprint = dataset_fingerprint(frames)
-        return DatasetContext("OULAD (full academic cohort)", fingerprint, "full-source", frames)
+        return DatasetContext("OULAD (full academic cohort)", fingerprint, "full-source", frames, oulad_metadata())
     canonical_files = {name: processed_source / f"{name}.csv" for name in ["students", "courses", "enrollments", "grades"]}
     if all(path.exists() for path in canonical_files.values()):
         frames = apply_catalog_enrichment({name: pd.read_csv(path) for name, path in canonical_files.items()})
@@ -54,6 +56,6 @@ def load_dataset(settings: Settings) -> DatasetContext:
             fingerprint = json.loads(manifest_path.read_text(encoding="utf-8"))["dataset_version"]
         else:
             fingerprint = dataset_fingerprint(frames)
-        return DatasetContext("OULAD (curated 750-learner cohort)", fingerprint, "canonical-processed", frames)
+        return DatasetContext("OULAD (curated 750-learner cohort)", fingerprint, "canonical-processed", frames, oulad_metadata())
     frames = build_development_fixture()
-    return DatasetContext("OULAD development fixture", "fixture-v1-seed-42", "development-fixture", frames)
+    return DatasetContext("OULAD development fixture", "fixture-v1-seed-42", "development-fixture", frames, oulad_metadata())

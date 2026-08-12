@@ -66,15 +66,25 @@ def build_schema_context(context: DatasetContext) -> dict[str, Any]:
                 entry["example_values"] = values
             columns.append(entry)
         tables[name] = {
-            "description": TABLE_DESCRIPTIONS[name],
+            "description": context.semantic.table_descriptions.get(name, TABLE_DESCRIPTIONS[name]),
             "row_count": int(len(frame)),
             "columns": columns,
         }
+    metric_definitions = [
+        definition for definition in METRIC_DEFINITIONS
+        if context.semantic.capabilities.learner_risk or not definition.startswith("academic-support risk")
+    ]
     return {
         "dataset_version": context.version,
         "tables": tables,
         "relationships": RELATIONSHIP_DESCRIPTIONS,
-        "metric_definitions": METRIC_DEFINITIONS,
+        "metric_definitions": [*metric_definitions, *context.semantic.metric_definitions],
+        "semantic_contract": {
+            "adapter_id": context.semantic.adapter_id,
+            "record_grain": context.semantic.record_grain,
+            "dimension_semantics": context.semantic.dimension_semantics,
+            "capabilities": context.semantic.to_dict()["capabilities"],
+        },
     }
 
 
@@ -108,6 +118,7 @@ async def generate_pandas_program(
         "For academic-support risk, use the exact risk definition in schema.metric_definitions and return a column named `risk`. "
         "Preserve every exact course code, presentation, or learner identifier mentioned in the question. "
         "Limit any table result to at most 100 rows using `.head(100)` when appropriate."
+        " Obey schema.semantic_contract exactly; never reinterpret a degree-program field as an individual course."
     )
     user_payload: dict[str, Any] = {
         "schema": schema_context,
