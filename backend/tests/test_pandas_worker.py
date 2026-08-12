@@ -112,8 +112,18 @@ def test_bounds_serialized_size_for_a_single_oversized_row():
 
 
 def test_bounds_serialized_size_for_many_moderately_sized_rows():
-    code = "result = [{'note': 'x' * 1000} for _ in range(300)]"
-    outcome = run_pandas_code(code, FRAMES, timeout=10.0)
+    # 100 rows (not more - MAX_RESULT_ROWS=100 in _normalize_result would otherwise cap the
+    # row count *before* _shrink_to_budget runs, which would mask the very loop this test
+    # exists to exercise) x 5000 chars each is ~501KB pre-shrink, comfortably over the 200KB
+    # budget by more than 2x - `_shrink_to_budget` must halve at least twice (100 -> 50 -> 25)
+    # to land under budget, which is what actually falsifies the original single-halve bug.
+    # A smaller payload (e.g. fewer rows or shorter strings) can satisfy this test after only
+    # one halving - the same result a single-pass (non-looping) shrink would also produce -
+    # so it would pass without the loop actually working. This spawn is slower than the
+    # other worker tests on Windows (real subprocess creation + pandas/numpy import in the
+    # child), so it uses a longer timeout than the module default rather than smaller data.
+    code = "result = [{'note': 'x' * 5000} for _ in range(100)]"
+    outcome = run_pandas_code(code, FRAMES, timeout=120.0)
     assert outcome.status == "ok"
     assert outcome.truncated is True
     import json
@@ -146,3 +156,21 @@ def test_worker_independently_rejects_dunder_introspection_without_the_ast_valid
     code = "mods = [c.__module__ for c in ().__class__.__bases__[0].__subclasses__()]\nresult = 'os' in mods"
     outcome = run_pandas_code(code, FRAMES)
     assert outcome.status == "error"
+
+
+def _noop_worker_entry(code, frames, result_queue):
+    # Module-level (spawn-picklable) stand-in for `_worker_entry` that deliberately returns
+    # without ever calling `result_queue.put(...)` - simulates a child process that exits
+    # (e.g. an interpreter crash or an uncaught BaseException) before it can report a
+    # result, exercising the `except Empty:` branch in `run_pandas_code` without needing to
+    # actually crash a real interpreter.
+    return
+
+
+def test_run_pandas_code_handles_a_worker_that_exits_without_a_result(monkeypatch):
+    import app.pandas_worker as pandas_worker_module
+
+    monkeypatch.setattr(pandas_worker_module, "_worker_entry", _noop_worker_entry)
+    outcome = run_pandas_code("result = 1", FRAMES)
+    assert outcome.status == "error"
+    assert "without" in outcome.error.lower()
