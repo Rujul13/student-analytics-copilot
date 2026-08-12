@@ -999,6 +999,87 @@ def test_verify_scope_preserved_rejects_count_only_rate_question(context):
     code = "result = int(enrollments[(enrollments['course_code']=='CCC') & (enrollments['final_result']=='Withdrawn')].shape[0])"
     error = verify_scope_preserved(scope, code, ["course_code", "final_result"])
     assert error is not None
+
+
+def test_verify_scope_preserved_accepts_boolean_mean_as_a_rate_computation(context):
+    scope = extract_scope("What is the withdrawal rate for CCC?", context)
+    code = "subset = enrollments[enrollments['course_code'] == 'CCC']\nresult = float((subset['final_result'] == 'Withdrawn').mean())"
+    assert verify_scope_preserved(scope, code, ["course_code", "final_result"]) is None
+
+
+def test_wants_rate_is_not_triggered_by_the_word_generate(context):
+    scope = extract_scope("Can you generate a report of the average grade in BBB?", context)
+    assert scope.wants_rate is False
+    code = "result = float(enrollments.merge(grades, on='enrollment_id')[enrollments['course_code']=='BBB']['weighted_grade'].mean())"
+    assert verify_scope_preserved(scope, code, ["course_code", "weighted_grade"]) is None
+
+
+def test_outcome_is_not_extracted_from_an_unrelated_word_containing_it(context):
+    scope = extract_scope("Give me a summary encompassing all learners in BBB", context)
+    assert scope.outcomes == []
+
+
+def test_verify_scope_preserved_rejects_code_dropping_the_requested_outcome(context):
+    scope = extract_scope("How many students passed BBB?", context)
+    assert scope.outcomes == ["Pass"]
+    code = "result = int(enrollments[enrollments['course_code'] == 'BBB'].shape[0])"
+    error = verify_scope_preserved(scope, code, ["course_code"])
+    assert error is not None
+    assert "Pass" in error
+
+
+def test_verify_scope_preserved_accepts_code_that_applies_the_requested_outcome(context):
+    scope = extract_scope("How many students passed BBB?", context)
+    code = "result = int(enrollments[(enrollments['course_code'] == 'BBB') & (enrollments['final_result'] == 'Pass')].shape[0])"
+    assert verify_scope_preserved(scope, code, ["course_code", "final_result"]) is None
+
+
+def test_verify_scope_preserved_rejects_code_ignoring_the_requested_count(context):
+    scope = extract_scope("Which five learners have the lowest grades in CCC?", context)
+    assert scope.requested_count == 5
+    code = (
+        "merged = enrollments.merge(grades, on='enrollment_id', how='left')\n"
+        "result = merged[merged['course_code'] == 'CCC'].sort_values('weighted_grade').head(20)\n"
+    )
+    error = verify_scope_preserved(scope, code, ["course_code", "weighted_grade"])
+    assert error is not None
+    assert "5" in error
+
+
+def test_verify_scope_preserved_accepts_code_that_applies_the_requested_count(context):
+    scope = extract_scope("Which five learners have the lowest grades in CCC?", context)
+    code = (
+        "merged = enrollments.merge(grades, on='enrollment_id', how='left')\n"
+        "result = merged[merged['course_code'] == 'CCC'].sort_values('weighted_grade').head(5)\n"
+    )
+    assert verify_scope_preserved(scope, code, ["course_code", "weighted_grade"]) is None
+
+
+def test_extract_scope_does_not_confuse_a_learner_id_with_its_numeric_prefix():
+    # OULAD IDs are numeric, so a shorter ID can be a literal prefix of a longer one in the
+    # dataset (e.g. OULAD-11391 is a prefix of OULAD-113910). A bare substring check would
+    # incorrectly extract both when only the longer one is named in the question; the `\b`
+    # word-boundary regex must not match between two digits, so it must extract only the one
+    # actually present.
+    frames = {
+        "students": pd.DataFrame(
+            {"student_id": ["OULAD-11391", "OULAD-113910"], "display_name": ["A", "B"], "program": ["P", "P"]}
+        ),
+        "courses": pd.DataFrame({"course_code": ["BBB"], "course_name": ["X"]}),
+        "enrollments": pd.DataFrame(
+            {
+                "enrollment_id": ["E1", "E2"],
+                "student_id": ["OULAD-11391", "OULAD-113910"],
+                "course_code": ["BBB", "BBB"],
+                "presentation": ["2014J", "2014J"],
+                "final_result": ["Pass", "Pass"],
+            }
+        ),
+        "grades": pd.DataFrame({"enrollment_id": ["E1", "E2"], "weighted_grade": [70.0, 80.0]}),
+    }
+    id_collision_context = DatasetContext("Test", "v1", "test", frames)
+    scope = extract_scope("Tell me about learner OULAD-113910.", id_collision_context)
+    assert scope.student_ids == ["OULAD-113910"]
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1028,6 +1109,19 @@ DEMOGRAPHIC_TERMS: dict[str, str] = {
     "age band": "age band",
     "age group": "age band",
     "ethnicity": "ethnicity",
+}
+
+# Maps question-text terms (including common inflections) to the canonical `final_result`
+# value they refer to. A plain substring/word-boundary check against `known_outcomes`
+# directly ("pass" from the dataset value "Pass") either misses grammatical variants like
+# "passed"/"withdrawal" (if word-boundary matching only the literal value) or false-positives
+# on unrelated words like "encompassing" containing "pass" (if using bare substring
+# matching without boundaries) - an explicit term list with `\b`-bounded matching avoids both.
+OUTCOME_TERMS: dict[str, str] = {
+    "pass": "Pass", "passed": "Pass", "passing": "Pass",
+    "distinction": "Distinction",
+    "fail": "Fail", "failed": "Fail", "failing": "Fail",
+    "withdrew": "Withdrawn", "withdrawn": "Withdrawn", "withdrawal": "Withdrawn", "withdraw": "Withdrawn",
 }
 
 _HIGHEST_TERMS = ("highest", "most", "greatest", "best", "top")
@@ -1061,9 +1155,22 @@ def extract_scope(question: str, context: DatasetContext) -> ScopeFilters:
 
     scope = ScopeFilters()
     scope.course_codes = [code for code in known_codes if re.search(rf"\b{re.escape(code.lower())}\b", normalized)]
-    scope.presentations = [pres for pres in known_presentations if pres.lower() in normalized]
-    scope.student_ids = [sid for sid in known_student_ids if sid.lower() in normalized]
-    scope.outcomes = [outcome for outcome in known_outcomes if outcome.lower() in normalized]
+    # Word-boundary matching (not bare substring `in`) for presentations/student_ids/outcomes
+    # too: without it, "encompassing" silently extracts the outcome "Pass" (it contains
+    # "pass"), and a shorter learner ID that is numerically a prefix of a longer one in the
+    # dataset (e.g. OULAD-11391 vs OULAD-113910 - realistic, since OULAD IDs are numeric)
+    # gets extracted alongside the one actually named in the question. `\b` does not match
+    # between two `\w` characters (digits count), so `\bOULAD-11391\b` correctly fails to
+    # match inside "OULAD-113910" - the boundary the course_codes line above already relies on.
+    scope.presentations = [pres for pres in known_presentations if re.search(rf"\b{re.escape(pres.lower())}\b", normalized)]
+    scope.student_ids = [sid for sid in known_student_ids if re.search(rf"\b{re.escape(sid.lower())}\b", normalized)]
+    scope.outcomes = sorted(
+        {
+            canonical
+            for term, canonical in OUTCOME_TERMS.items()
+            if canonical in known_outcomes and re.search(rf"\b{term}\b", normalized)
+        }
+    )
 
     if any(re.search(rf"\b{term}\b", normalized) for term in _HIGHEST_TERMS):
         scope.sort_direction = "highest"
@@ -1084,7 +1191,11 @@ def extract_scope(question: str, context: DatasetContext) -> ScopeFilters:
     scope.group_by_module = any(
         phrase in normalized for phrase in ("by module", "by course", "per module", "per course", "each module", "each course")
     )
-    scope.wants_rate = any(term in normalized for term in ("rate", "percentage", "percent"))
+    # Word-boundary matching for "rate" specifically - a bare substring check makes
+    # "generate", "separate", "moderate", "operate", "accelerate", etc. all falsely set
+    # wants_rate, which then wrongly demands rate-shaped code from an otherwise-correct
+    # program (e.g. "Can you generate a report of the average grade in BBB?").
+    scope.wants_rate = any(re.search(rf"\b{term}\b", normalized) for term in ("rate", "percentage", "percent"))
     scope.missing_fields = sorted(
         {canonical for term, canonical in DEMOGRAPHIC_TERMS.items() if re.search(rf"\b{re.escape(term)}\b", normalized)}
     )
@@ -1101,6 +1212,11 @@ def verify_scope_preserved(scope: ScopeFilters, code: str, referenced_columns: l
     for student_id in scope.student_ids:
         if student_id not in code:
             return f"The generated code did not apply the requested learner identifier {student_id}."
+    for outcome in scope.outcomes:
+        if outcome not in code:
+            return f"The generated code did not apply the requested outcome filter '{outcome}'."
+    if scope.requested_count is not None and str(scope.requested_count) not in code:
+        return f"The generated code did not apply the requested result count of {scope.requested_count}."
     if scope.group_by_module and "course_code" not in code and "course_code" not in referenced_columns:
         return "The generated code did not group results by module as requested."
     if scope.sort_direction == "highest":
@@ -1112,7 +1228,10 @@ def verify_scope_preserved(scope: ScopeFilters, code: str, referenced_columns: l
         default_ascending_sort = "sort_values" in code and "ascending=False" not in code and (".head(" in code or "idxmin" in code)
         if not (any(marker in code for marker in ascending_markers) or default_ascending_sort):
             return "The generated code did not apply a lowest/ascending ordering as requested."
-    if scope.wants_rate and "/" not in code and "rate" not in code.lower():
+    if scope.wants_rate and "/" not in code and "rate" not in code.lower() and ".mean(" not in code:
+        # `.mean()` on a boolean condition (`(series == value).mean()`) is an idiomatic,
+        # correct way to compute a rate/proportion in Pandas without an explicit `/` or the
+        # literal word "rate" appearing anywhere in the code - accept it as evidence too.
         return "The generated code returned a count rather than a calculated rate."
     return None
 
