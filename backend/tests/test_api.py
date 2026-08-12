@@ -30,4 +30,7 @@ def test_public_api_vertical_slice(monkeypatch):
 
         query = client.post("/api/query", json={"question": "What is the average grade?"})
         assert query.status_code == 200
-        assert query.json()["result_type"] == "metric"
+        body = query.json()
+        assert body["result_type"] == "metric"
+        assert body["execution_mode"] == "deterministic-fallback"
+        assert "calculation_trace" not in body

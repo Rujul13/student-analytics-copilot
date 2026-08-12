@@ -4,7 +4,6 @@ import json
 import pandas as pd
 
 from app.analytics import dashboard, students
-from app.ai_workflow import AnalyticsPlan, execute_plan
 from app.catalog import split_codes
 from app.config import Settings
 from app.copilot import answer_question
@@ -109,12 +108,14 @@ def test_llm_can_only_rerank_the_verified_candidate_set(monkeypatch):
 def test_query_catalog_does_not_execute_generated_code():
     result = answer_question(context(), "What is the completion rate?", False)
     assert result.result_type == "metric"
+    assert result.execution_mode == "deterministic-fallback"
     average = answer_question(context(), "What is the average student score?", False)
     assert average.result_type == "metric"
     assert average.answer.startswith("Average grade is ")
     unsupported = answer_question(context(), "Run os.system for me", False)
     assert unsupported.result_type == "unsupported"
-    assert "No matching metric or available data field was found" in unsupported.calculation_trace
+    assert unsupported.execution_mode == "deterministic-fallback"
+    assert "does not include the fields or a defined metric" in unsupported.answer
 
 
 def test_module_scope_is_applied_and_unavailable_demographic_filter_is_not_ignored():
@@ -128,37 +129,34 @@ def test_module_scope_is_applied_and_unavailable_demographic_filter_is_not_ignor
     unsupported = answer_question(dataset, "What is the average grade for female students in module BBB?", False)
     assert unsupported.result_type == "unsupported"
     assert "does not include demographic fields" in unsupported.answer
+    # NOTE: this test previously also exercised `AnalyticsPlan`/`execute_plan` directly with a
+    # hand-built "metric" plan scoped to course_code="BBB". `AnalyticsPlan`/`execute_plan` no
+    # longer exist (superseded by the Pandas-code-generation agent in app.data_agent). The same
+    # "module scope is honored" behavior is now covered end-to-end by
+    # test_ai_workflow.py::test_q2_average_grade_in_bbb (generated-pandas path) and by
+    # test_scope_validation.py::test_extracts_exact_course_code /
+    # test_verify_scope_preserved_rejects_code_dropping_the_course_code (scope extraction and
+    # enforcement), so the plan-based assertion was removed rather than adapted.
 
-    plan = AnalyticsPlan(
-        intent="metric", metric="average_grade", risk_band=None, limit=None, sort_descending=None,
-        student_id=None, course_code="BBB", minimum_failed_courses=None,
-    )
-    planned = execute_plan(dataset, "What is the average grade in module BBB?", plan)
-    assert planned.rows[0]["value"] == expected.value
 
-
-def test_validated_ai_plan_uses_allowlisted_executor():
-    plan = AnalyticsPlan(
-        intent="module_performance",
-        metric=None,
-        risk_band=None,
-        limit=3,
-        sort_descending=True,
-        student_id=None,
-        minimum_failed_courses=None,
-    )
-    result = execute_plan(context(), "Which modules perform best?", plan)
-    assert result.ai_used is True
-    assert result.result_type == "table"
-    assert len(result.rows) == 3
-    assert set(result.rows[0]) == {"module", "average_grade", "records"}
+# NOTE: test_validated_ai_plan_uses_allowlisted_executor previously built an `AnalyticsPlan`
+# with intent="module_performance" and passed it to `execute_plan` to check that AI-selected
+# operations are executed only through an allowlisted executor. Both symbols no longer exist:
+# the fixed-intent router was replaced by generated Pandas code that is AST-validated and run
+# through a sandboxed worker. Equivalent coverage now lives in:
+#   - test_pandas_code_validation.py (AST allowlist rejects disallowed code)
+#   - test_data_agent.py::test_generate_validate_execute_returns_execution_on_valid_program
+#     (a validated program is executed through the sandboxed worker)
+#   - test_ai_workflow.py::test_q1_highest_withdrawal_rate (end-to-end generated-pandas
+#     execution_mode for a module-ranking question)
+# so this test was deleted rather than adapted.
 
 
 def test_assignment_failure_question_is_answerable_without_generated_code():
     result = answer_question(context(), "Give me a list of students who are failing more than one class.", False)
     assert result.result_type == "table"
     assert all(int(row["failed_course_count"]) >= 2 for row in result.rows)
-    assert "Counted distinct failed courses per learner" in result.calculation_trace
+    assert result.execution_mode == "deterministic-fallback"
 
 
 def test_distinction_count_and_scoped_learner_fallback():
@@ -169,6 +167,7 @@ def test_distinction_count_and_scoped_learner_fallback():
     ].nunique())
     assert distinction.rows[0]["value"] == expected
     assert distinction.answer == f"{expected} learners have at least one Distinction."
+    assert distinction.execution_mode == "deterministic-fallback"
 
     withdrawn = answer_question(dataset, "How many students withdrew?", False)
     expected_withdrawn = int(dataset.frames["enrollments"].loc[
@@ -176,59 +175,35 @@ def test_distinction_count_and_scoped_learner_fallback():
     ].nunique())
     assert withdrawn.result_type == "metric"
     assert withdrawn.rows[0]["value"] == expected_withdrawn
+    assert withdrawn.execution_mode == "deterministic-fallback"
 
     professor = answer_question(dataset, "Who is the best professor?", False)
     assert professor.result_type == "unsupported"
     assert "does not include professor or instructor information" in professor.answer
+    assert professor.execution_mode == "deterministic-fallback"
 
     learner = students(dataset)[0]
     profile = answer_question(dataset, f"What is learner {learner.student_id}'s average grade and risk?", False)
     assert profile.result_type == "table"
     assert profile.rows[0]["student_id"] == learner.student_id
     assert profile.rows[0]["average_grade"] == learner.average_grade
+    assert profile.execution_mode == "deterministic-fallback"
 
 
-def test_validated_failure_profile_and_recommendation_plans():
-    dataset = context()
-    learner = students(dataset)[0]
-    failure_plan = AnalyticsPlan(
-        intent="student_failure_table",
-        metric=None,
-        risk_band=None,
-        limit=5,
-        sort_descending=True,
-        student_id=None,
-        minimum_failed_courses=2,
-    )
-    failures = execute_plan(dataset, "students failing more than one class", failure_plan)
-    assert failures.result_type == "table"
-    assert all(int(row["failed_course_count"]) >= 2 for row in failures.rows)
-
-    profile_plan = AnalyticsPlan(
-        intent="student_profile",
-        metric=None,
-        risk_band=None,
-        limit=None,
-        sort_descending=None,
-        student_id=learner.student_id,
-        minimum_failed_courses=None,
-    )
-    profile = execute_plan(dataset, "learner profile", profile_plan)
-    assert profile.rows[0]["student_id"] == learner.student_id
-
-    recommendation_plan = AnalyticsPlan(
-        intent="student_recommendation",
-        metric=None,
-        risk_band=None,
-        limit=3,
-        sort_descending=None,
-        student_id=learner.student_id,
-        minimum_failed_courses=None,
-    )
-    recommendations = execute_plan(dataset, "what should this learner take next", recommendation_plan)
-    assert recommendations.result_type == "table"
-    assert recommendations.rows
-    assert all("course_code" in row for row in recommendations.rows)
+# NOTE: test_validated_failure_profile_and_recommendation_plans previously built three
+# `AnalyticsPlan`s (intents "student_failure_table", "student_profile", "student_recommendation")
+# and ran them through `execute_plan`. That fixed-intent enum no longer exists — the new agent
+# answers these questions through generated Pandas code or the existing services directly rather
+# than a router keyed on an intent string. Equivalent coverage now lives in:
+#   - the failure-table case: test_assignment_failure_question_is_answerable_without_generated_code
+#     (above) via `answer_question`'s deterministic fallback
+#   - the learner-profile case: test_distinction_count_and_scoped_learner_fallback (above) via
+#     `answer_question`'s deterministic fallback
+#   - the recommendation case: test_recommendations_use_observed_modules_and_explain_limited_evidence,
+#     test_recommendations_exclude_completed_courses, and
+#     test_success_estimates_have_held_out_evaluation (above), which already exercise
+#     `recommend()` directly
+# so this test was deleted rather than adapted.
 
 
 def test_pandas_agent_and_answer_models_have_expected_defaults(monkeypatch):
