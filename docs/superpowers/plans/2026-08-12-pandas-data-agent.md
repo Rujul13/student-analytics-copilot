@@ -1970,17 +1970,21 @@ async def test_q8_highest_distinction_rate(context):
 
 @pytest.mark.asyncio
 async def test_q9_tell_me_about_a_learner(context):
+    # `result` must be a DataFrame with one row here, not a bare dict: pandas_worker's
+    # `_normalize_result` (Task 3) treats a bare dict as key/value pairs
+    # ([{"key": ..., "value": ...}, ...]), not as a single row with named columns - a bare
+    # dict would make `response.rows[0]["student_id"]` below raise a KeyError.
     program = GeneratedPandasProgram(
         interpretation="Profile and enrollment history for OULAD-242636",
         code=(
             "profile = students[students['student_id'] == 'OULAD-242636']\n"
             "history = enrollments[enrollments['student_id'] == 'OULAD-242636'].merge(grades, on='enrollment_id', how='left')\n"
-            "result = {\n"
+            "result = pd.DataFrame([{\n"
             "    'student_id': 'OULAD-242636',\n"
             "    'display_name': str(profile['display_name'].iloc[0]),\n"
             "    'average_grade': float(history['weighted_grade'].mean()) if history['weighted_grade'].notna().any() else None,\n"
             "    'enrollment_count': int(len(history)),\n"
-            "}\n"
+            "}])\n"
         ),
         result_type="table",
         referenced_tables=["students", "enrollments", "grades"],
@@ -2130,9 +2134,14 @@ async def test_response_never_contains_generated_code(context):
 
 @pytest.mark.asyncio
 async def test_no_api_key_reaches_the_worker_process(context):
+    # The code must literally contain "BBB": the question mentions module BBB, so
+    # scope_validation's verify_scope_preserved (Task 4) requires the generated code to
+    # apply it - code that doesn't would fail scope validation on the first attempt and
+    # consume this test's only queued mock program on the mandatory repair retry, since
+    # _queue_client has nothing left to serve a second generation call.
     program = GeneratedPandasProgram(
         interpretation="attempt to read env",
-        code="result = 'irrelevant'",
+        code="result = 'BBB'",
         result_type="scalar", referenced_tables=["enrollments"], referenced_columns=[],
     )
     import os
