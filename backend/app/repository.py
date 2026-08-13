@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -22,6 +23,7 @@ class DatasetContext:
     mode: str
     frames: dict[str, pd.DataFrame]
     semantic: SemanticMetadata = field(default_factory=canonical_metadata)
+    cache: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 def dataset_fingerprint(frames: dict[str, pd.DataFrame]) -> str:

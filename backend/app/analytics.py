@@ -39,11 +39,17 @@ def dashboard(
     average_grade = float(joined["weighted_grade"].mean()) if len(joined) else 0.0
     completion_rate = float(joined["final_result"].isin(success_outcomes).mean() * 100) if len(joined) else 0.0
     withdrawal_rate = float(joined["final_result"].isin(withdrawal_outcomes).mean() * 100) if len(joined) else 0.0
-    student_rollup = joined.groupby("student_id").agg(
-        average_grade=("weighted_grade", "mean"), withdrawals=("final_result", lambda values: int(values.isin(withdrawal_outcomes).sum()))
-    ) if len(joined) else pd.DataFrame(columns=["average_grade", "withdrawals"])
+    if len(joined):
+        joined = joined.assign(_withdrawal=joined["final_result"].isin(withdrawal_outcomes).astype("int8"))
+        student_rollup = joined.groupby("student_id").agg(
+            average_grade=("weighted_grade", "mean"), withdrawals=("_withdrawal", "sum")
+        )
+    else:
+        student_rollup = pd.DataFrame(columns=["average_grade", "withdrawals"])
     if len(student_rollup):
-        student_rollup["risk"] = student_rollup.apply(lambda row: risk_label(row.average_grade, row.withdrawals), axis=1)
+        student_rollup["risk"] = "Low"
+        student_rollup.loc[student_rollup["average_grade"].lt(65) | student_rollup["withdrawals"].eq(1), "risk"] = "Medium"
+        student_rollup.loc[student_rollup["average_grade"].lt(50) | student_rollup["withdrawals"].ge(2), "risk"] = "High"
     else:
         student_rollup["risk"] = pd.Series(dtype="object")
     high_risk = int(student_rollup["risk"].eq("High").sum())
@@ -86,25 +92,33 @@ def dashboard(
 
 
 def _student_rollup(context: DatasetContext) -> pd.DataFrame:
+    cached = context.cache.get("student_rollup")
+    if cached is not None:
+        return cached
     joined = _joined(context)
+    joined = joined.assign(_withdrawal=joined["final_result"].isin(set(context.semantic.withdrawal_outcomes)).astype("int8"))
     rollup = joined.groupby("student_id").agg(
         average_grade=("weighted_grade", "mean"),
         credits_earned=("credits", "sum"),
         graded_enrollments=("weighted_grade", "count"),
-        withdrawals=("final_result", lambda values: int(values.isin(set(context.semantic.withdrawal_outcomes)).sum())),
+        withdrawals=("_withdrawal", "sum"),
     ).reset_index()
     merged = context.frames["students"].merge(rollup, on="student_id", how="left")
     for column in ["average_grade", "credits_earned", "graded_enrollments", "withdrawals"]:
         merged[column] = merged[column].fillna(0)
-    merged["risk"] = merged.apply(lambda row: risk_label(float(row.average_grade), int(row.withdrawals)), axis=1)
+    merged["risk"] = "Low"
+    merged.loc[merged["average_grade"].lt(65) | merged["withdrawals"].eq(1), "risk"] = "Medium"
+    merged.loc[merged["average_grade"].lt(50) | merged["withdrawals"].ge(2), "risk"] = "High"
     merged["status"] = merged["graded_enrollments"].map(lambda value: "Graded evidence available" if int(value) else "No graded assessment")
     risk_order = {"High": 0, "Medium": 1, "Low": 2}
     merged["risk_order"] = merged["risk"].map(risk_order)
     merged["no_graded_assessment"] = merged["graded_enrollments"].eq(0)
-    return merged.sort_values(
+    result = merged.sort_values(
         ["risk_order", "no_graded_assessment", "average_grade", "student_id"],
         ascending=[True, True, True, True],
     )
+    context.cache["student_rollup"] = result
+    return result
 
 
 def _student_models(frame: pd.DataFrame) -> list[StudentSummary]:
