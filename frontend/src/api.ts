@@ -1,4 +1,4 @@
-import type { ConversationTurn, DashboardData, DashboardFilters, DatasetInfo, ImportMappingSuggestion, ImportPreview, QueryResponse, RecommendationResponse, Student } from "./types";
+import type { ConversationTurn, DashboardData, DashboardFilters, DatasetInfo, ImportMappingSuggestion, ImportPreview, QueryResponse, RecommendationResponse, StudentPage } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -19,7 +19,14 @@ export const api = {
     return request<DashboardData>(`/api/dashboard${params.size ? `?${params}` : ""}`);
   },
   dataset: () => request<DatasetInfo>("/api/dataset"),
-  students: () => request<Student[]>("/api/students"),
+  students: (options: { search?: string; risk?: string; offset?: number; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (options.search) params.set("search", options.search);
+    if (options.risk && options.risk !== "All") params.set("risk", options.risk);
+    params.set("offset", String(options.offset ?? 0));
+    params.set("limit", String(options.limit ?? 50));
+    return request<StudentPage>(`/api/students?${params}`);
+  },
   recommendations: (studentId: string) =>
     request<RecommendationResponse>(`/api/students/${encodeURIComponent(studentId)}/recommendations`),
   query: (question: string, history: ConversationTurn[] = []) =>

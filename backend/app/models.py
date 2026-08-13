@@ -61,6 +61,13 @@ class StudentSummary(BaseModel):
     status: str
 
 
+class StudentPage(BaseModel):
+    items: list[StudentSummary]
+    total: int
+    offset: int
+    limit: int
+
+
 class Recommendation(BaseModel):
     course_code: str
     course_name: str

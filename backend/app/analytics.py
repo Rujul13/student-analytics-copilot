@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .models import DashboardFilterOptions, DashboardResponse, DashboardSpecificationModel, DistributionPoint, Metric, StudentSummary
+from .models import DashboardFilterOptions, DashboardResponse, DashboardSpecificationModel, DistributionPoint, Metric, StudentPage, StudentSummary
 from .repository import DatasetContext
 
 
@@ -85,7 +85,7 @@ def dashboard(
     )
 
 
-def students(context: DatasetContext) -> list[StudentSummary]:
+def _student_rollup(context: DatasetContext) -> pd.DataFrame:
     joined = _joined(context)
     rollup = joined.groupby("student_id").agg(
         average_grade=("weighted_grade", "mean"),
@@ -96,8 +96,20 @@ def students(context: DatasetContext) -> list[StudentSummary]:
     merged = context.frames["students"].merge(rollup, on="student_id", how="left")
     for column in ["average_grade", "credits_earned", "graded_enrollments", "withdrawals"]:
         merged[column] = merged[column].fillna(0)
-    result = []
-    for row in merged.itertuples():
+    merged["risk"] = merged.apply(lambda row: risk_label(float(row.average_grade), int(row.withdrawals)), axis=1)
+    merged["status"] = merged["graded_enrollments"].map(lambda value: "Graded evidence available" if int(value) else "No graded assessment")
+    risk_order = {"High": 0, "Medium": 1, "Low": 2}
+    merged["risk_order"] = merged["risk"].map(risk_order)
+    merged["no_graded_assessment"] = merged["graded_enrollments"].eq(0)
+    return merged.sort_values(
+        ["risk_order", "no_graded_assessment", "average_grade", "student_id"],
+        ascending=[True, True, True, True],
+    )
+
+
+def _student_models(frame: pd.DataFrame) -> list[StudentSummary]:
+    result: list[StudentSummary] = []
+    for row in frame.itertuples():
         result.append(StudentSummary(
             student_id=row.student_id,
             display_name=row.display_name,
@@ -106,16 +118,30 @@ def students(context: DatasetContext) -> list[StudentSummary]:
             credits_earned=int(row.credits_earned),
             graded_enrollments=int(row.graded_enrollments),
             withdrawals=int(row.withdrawals),
-            risk=risk_label(float(row.average_grade), int(row.withdrawals)),
-            status="Graded evidence available" if int(row.graded_enrollments) else "No graded assessment",
+            risk=row.risk,
+            status=row.status,
         ))
-    risk_order = {"High": 0, "Medium": 1, "Low": 2}
-    return sorted(
-        result,
-        key=lambda student: (
-            risk_order[student.risk],
-            student.graded_enrollments == 0,
-            student.average_grade,
-            student.student_id,
-        ),
-    )
+    return result
+
+
+def students(context: DatasetContext) -> list[StudentSummary]:
+    return _student_models(_student_rollup(context))
+
+
+def student_page(
+    context: DatasetContext,
+    search: str | None = None,
+    risk: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> StudentPage:
+    frame = _student_rollup(context)
+    if risk and risk != "All":
+        frame = frame[frame["risk"].eq(risk)]
+    if search and search.strip():
+        needle = search.strip().casefold()
+        haystack = (frame["display_name"].astype(str) + " " + frame["student_id"].astype(str)).str.casefold()
+        frame = frame[haystack.str.contains(needle, regex=False)]
+    total = len(frame)
+    page = frame.iloc[offset:offset + limit]
+    return StudentPage(items=_student_models(page), total=total, offset=offset, limit=limit)

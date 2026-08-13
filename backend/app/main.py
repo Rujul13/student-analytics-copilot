@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .ai_workflow import AnalyticsWorkflow, run_copilot
-from .analytics import dashboard, students
+from .analytics import dashboard, student_page
 from .config import get_settings
 from .imports import ImportValidationError, ROLE_HEADERS, TEMPLATE_ROWS, apply_upload_mappings, parse_uploads, preview_payload, suggest_upload_mappings, validate_and_build
 from .models import (
@@ -21,6 +21,7 @@ from .models import (
     QueryRequest,
     QueryResponse,
     RecommendationResponse,
+    StudentPage,
     StudentSummary,
 )
 from .recommendations import add_ai_explanations, recommend
@@ -185,9 +186,19 @@ def dashboard_endpoint(
     return dashboard(_context(request), course_code=course_code, presentation=presentation, final_result=final_result)
 
 
-@app.get("/api/students", response_model=list[StudentSummary])
-def students_endpoint(request: Request) -> list[StudentSummary]:
-    return students(_context(request))
+@app.get("/api/students", response_model=StudentPage)
+def students_endpoint(
+    request: Request,
+    search: str | None = None,
+    risk: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> StudentPage:
+    if risk not in {None, "All", "High", "Medium", "Low"}:
+        raise HTTPException(status_code=400, detail="Risk must be All, High, Medium, or Low")
+    if offset < 0 or limit < 1 or limit > 200:
+        raise HTTPException(status_code=400, detail="Offset must be non-negative and limit must be between 1 and 200")
+    return student_page(_context(request), search=search, risk=risk, offset=offset, limit=limit)
 
 
 @app.get("/api/students/{student_id}/recommendations", response_model=RecommendationResponse)

@@ -137,6 +137,13 @@ export interface Student {
   status: string;
 }
 
+export interface StudentPage {
+  items: Student[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 export interface Recommendation {
   course_code: string;
   course_name: string;

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   ArrowRight,
   BarChart3,
@@ -227,39 +227,48 @@ function Copilot({ aiEnabled, dataset }: { aiEnabled: boolean; dataset: DatasetI
   </section>;
 }
 
-function Recommendations({ students, initialRisk }: { students: Student[]; initialRisk: Student["risk"] | "All" }) {
+function Recommendations({ initialRisk }: { initialRisk: Student["risk"] | "All" }) {
   const LEARNER_PAGE_SIZE = 50;
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState<Student["risk"] | "All">(initialRisk);
-  const [visibleLearners, setVisibleLearners] = useState(LEARNER_PAGE_SIZE);
-  const [selected, setSelected] = useState<Student | null>(students.find((student) => student.graded_enrollments > 0) ?? students[0] ?? null);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [totalLearners, setTotalLearners] = useState(0);
+  const [learnersLoading, setLearnersLoading] = useState(true);
+  const [learnerError, setLearnerError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Student | null>(null);
   const [result, setResult] = useState<RecommendationResponse | null>(null);
-  const filtered = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
-    return students.filter((student) =>
-      (riskFilter === "All" || student.risk === riskFilter)
-      && (!normalizedSearch || `${student.display_name} ${student.student_id}`.toLowerCase().includes(normalizedSearch))
-    );
-  }, [students, search, riskFilter]);
-  const displayed = useMemo(() => filtered.slice(0, visibleLearners), [filtered, visibleLearners]);
+  const [recommendationError, setRecommendationError] = useState<string | null>(null);
 
   useEffect(() => { setRiskFilter(initialRisk); }, [initialRisk]);
 
-  useEffect(() => { setVisibleLearners(LEARNER_PAGE_SIZE); }, [search, riskFilter]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setLearnersLoading(true); setLearnerError(null);
+      void api.students({ search: search.trim(), risk: riskFilter, limit: LEARNER_PAGE_SIZE })
+        .then((page) => {
+          setStudents(page.items); setTotalLearners(page.total);
+          setSelected((current) => page.items.find((student) => student.student_id === current?.student_id) ?? page.items.find((student) => student.graded_enrollments > 0) ?? page.items[0] ?? null);
+        })
+        .catch(() => { setStudents([]); setTotalLearners(0); setSelected(null); setLearnerError("Learner records could not be loaded."); })
+        .finally(() => setLearnersLoading(false));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [search, riskFilter]);
 
   useEffect(() => {
-    if (!filtered.length) {
-      setSelected(null);
-    } else if (!filtered.some((student) => student.student_id === selected?.student_id)) {
-      setSelected(filtered[0]);
-    }
-  }, [filtered, selected]);
-
-  useEffect(() => {
-    setResult(null);
+    setResult(null); setRecommendationError(null);
     if (!selected) return;
-    void api.recommendations(selected.student_id).then(setResult);
+    void api.recommendations(selected.student_id).then(setResult).catch(() => setRecommendationError("Recommendations could not be loaded for this learner."));
   }, [selected]);
+
+  async function showMoreLearners() {
+    setLearnersLoading(true); setLearnerError(null);
+    try {
+      const page = await api.students({ search: search.trim(), risk: riskFilter, offset: students.length, limit: LEARNER_PAGE_SIZE });
+      setStudents((current) => [...current, ...page.items]); setTotalLearners(page.total);
+    } catch { setLearnerError("More learner records could not be loaded."); }
+    finally { setLearnersLoading(false); }
+  }
 
   return <section>
     <div className="section-title"><div><p className="eyebrow">Course recommendation engine</p><h1>Explore the next best module.</h1></div><p>Historical outcomes and learner evidence first. AI ranking and explanation last.</p></div>
@@ -269,16 +278,18 @@ function Recommendations({ students, initialRisk }: { students: Student[]; initi
         <label className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a learner" /></label>
         <label className="priority-filter"><span>Academic-support priority</span><select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as Student["risk"] | "All")}><option>All</option><option>High</option><option>Medium</option><option>Low</option></select></label>
         <p className="priority-help">Support priority, not course suitability. High: average below 50% or 2+ withdrawals. Medium: below 65% or 1 withdrawal. Low: otherwise.</p>
-        <p className="learner-result-count" aria-live="polite">{filtered.length.toLocaleString()} matching learner{filtered.length === 1 ? "" : "s"}</p>
+        <p className="learner-result-count" aria-live="polite">{totalLearners.toLocaleString()} matching learner{totalLearners === 1 ? "" : "s"}</p>
         <div className="student-items">
-          {displayed.map((student) => <button type="button" className={selected?.student_id === student.student_id ? "selected" : ""} onClick={() => setSelected(student)} key={student.student_id}>
+          {students.map((student) => <button type="button" className={selected?.student_id === student.student_id ? "selected" : ""} onClick={() => setSelected(student)} key={student.student_id}>
             <span className="avatar">{student.display_name.split(" ").at(-1)?.slice(-2)}</span>
             <span><strong>{student.display_name}</strong><small>{student.student_id} · {student.graded_enrollments ? `${student.average_grade}%` : "No recorded grade"}</small></span>
             <i className={`risk ${student.risk.toLowerCase()}`} title={`${student.risk} academic-support priority`}>{student.risk} priority</i>
           </button>)}
-          {!filtered.length && <p className="no-learners">No learners match this search and priority.</p>}
-          {displayed.length < filtered.length && <button type="button" className="load-more-learners" onClick={() => setVisibleLearners((count) => count + LEARNER_PAGE_SIZE)}>
-            Show more learners ({(filtered.length - displayed.length).toLocaleString()} remaining)
+          {!learnersLoading && !students.length && !learnerError && <p className="no-learners">No learners match this search and priority.</p>}
+          {learnerError && <p className="no-learners">{learnerError}</p>}
+          {learnersLoading && <Loading />}
+          {students.length < totalLearners && <button type="button" className="load-more-learners" disabled={learnersLoading} onClick={() => void showMoreLearners()}>
+            Show more learners ({(totalLearners - students.length).toLocaleString()} remaining)
           </button>}
         </div>
       </aside>
@@ -287,7 +298,8 @@ function Recommendations({ students, initialRisk }: { students: Student[]; initi
           <div><p className="eyebrow">Selected learner</p><h2>{selected.display_name}</h2><span>{selected.credits_earned} credits earned · {selected.graded_enrollments} graded module{selected.graded_enrollments === 1 ? "" : "s"} · {selected.withdrawals} withdrawal{selected.withdrawals === 1 ? "" : "s"} · {selected.risk} support priority</span></div>
           <div className="grade-ring"><strong>{selected.graded_enrollments ? selected.average_grade : "—"}</strong><small>{selected.graded_enrollments ? "avg." : "no grade"}</small></div>
         </div>}
-        {!result && <Loading />}
+        {!result && !recommendationError && selected && <Loading />}
+        {recommendationError && <div className="error-banner"><CircleAlert size={18} />{recommendationError}</div>}
         {result && <>
           <div className="mode-note"><Database size={16} /><span><strong>{result.capability_mode === "graduation-aware" ? "Graduation-aware recommendation" : "Historical-performance recommendation"}</strong> · {result.catalog_label} · {result.selection_summary}</span></div>
           {result.success_model && <div className="model-evaluation"><TrendingUp size={16} /><span><strong>Evaluated success baseline</strong><small>{result.success_model.model_name} · held-out n={result.success_model.test_records} · accuracy {(result.success_model.accuracy * 100).toFixed(1)}% · ROC AUC {result.success_model.roc_auc.toFixed(3)} · Brier {result.success_model.brier_score.toFixed(3)}</small></span></div>}
@@ -406,7 +418,6 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
 export default function App() {
   const [view, setView] = useState<View>("overview");
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
-  const [students, setStudents] = useState<Student[]>([]);
   const [dataset, setDataset] = useState<DatasetInfo | null>(null);
   const [aiEnabled, setAiEnabled] = useState(false);
   const [dashboardFilters, setDashboardFilters] = useState<DashboardFilters>({});
@@ -415,9 +426,9 @@ export default function App() {
 
   const loadData = useCallback(async () => {
     try {
-      const [dashboardData, studentData, config, datasetInfo] = await Promise.all([api.dashboard(dashboardFilters), api.students(), api.config(), api.dataset()]);
-      setDashboard(dashboardData); setStudents(studentData); setAiEnabled(config.ai_enabled); setDataset(datasetInfo); setError(null);
-    } catch { setError("The analytics service is unavailable. Start the API and refresh this page."); }
+      const [dashboardData, config, datasetInfo] = await Promise.all([api.dashboard(dashboardFilters), api.config(), api.dataset()]);
+      setDashboard(dashboardData); setAiEnabled(config.ai_enabled); setDataset(datasetInfo); setError(null);
+    } catch { setError("The analytics service is temporarily unavailable. Please refresh and try again."); }
   }, [dashboardFilters]);
 
   useEffect(() => { void loadData(); }, [loadData]);
@@ -437,7 +448,7 @@ export default function App() {
         {!error && !dashboard && <Loading />}
         {dashboard && view === "overview" && <Overview data={dashboard} dataset={dataset} filters={dashboardFilters} onFilter={setDashboardFilters} onNavigate={setView} onOpenPriority={() => { setRecommendationRiskFilter("High"); setView("recommendations"); }} />}
         {dashboard && view === "copilot" && <Copilot aiEnabled={aiEnabled} dataset={dataset} />}
-        {dashboard && view === "recommendations" && <Recommendations students={students} initialRisk={recommendationRiskFilter} />}
+        {dashboard && view === "recommendations" && <Recommendations initialRisk={recommendationRiskFilter} />}
         {dashboard && view === "import" && <ImportData dataset={dataset} onActivated={loadData} />}
       </div>
     </main>

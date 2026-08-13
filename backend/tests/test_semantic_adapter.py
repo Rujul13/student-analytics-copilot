@@ -62,7 +62,7 @@ def test_kaggle_academic_success_adapter_is_recognized_and_capability_gated(monk
         assert dashboard["specification"]["priority_enabled"] is False
         assert {point["label"] for point in dashboard["modules"]} == {"Degree program 33", "Degree program 171"}
 
-        learners = client.get("/api/students").json()
+        learners = client.get("/api/students").json()["items"]
         recommendations = client.get(f"/api/students/{learners[0]['student_id']}/recommendations")
         assert recommendations.status_code == 409
         assert "no individual course history" in recommendations.json()["detail"]

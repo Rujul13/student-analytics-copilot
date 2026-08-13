@@ -22,7 +22,14 @@ def test_public_api_vertical_slice(monkeypatch):
         assert filtered_dashboard.json()["metrics"][0]["value"] < 28785
         assert [point["label"] for point in filtered_dashboard.json()["modules"]] == ["CCC"]
 
-        student = client.get("/api/students").json()[0]
+        learner_page = client.get("/api/students").json()
+        assert learner_page["total"] == 28785
+        assert len(learner_page["items"]) == 50
+        assert learner_page["offset"] == 0
+        student = learner_page["items"][0]
+        searched_page = client.get("/api/students", params={"search": student["student_id"], "limit": 10}).json()
+        assert searched_page["total"] == 1
+        assert searched_page["items"][0]["student_id"] == student["student_id"]
         recommendations = client.get(f"/api/students/{student['student_id']}/recommendations")
         assert recommendations.status_code == 200
         assert recommendations.json()["capability_mode"] == "historical-performance"
