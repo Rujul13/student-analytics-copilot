@@ -135,7 +135,7 @@ function Copilot({ aiEnabled, dataset }: { aiEnabled: boolean; dataset: DatasetI
   const suggestions = courseHistoryAvailable ? [
     "How many learners earned a distinction?",
     "Which modules have the lowest average grades?",
-    "Which students failed more than one class?",
+    "How many learners failed at least two modules?",
   ] : [
     "How many students dropped out?",
     "Which degree programs have the lowest average grades?",
@@ -144,20 +144,21 @@ function Copilot({ aiEnabled, dataset }: { aiEnabled: boolean; dataset: DatasetI
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<{ id: number; question: string; result: QueryResponse }[]>([]);
   const [busy, setBusy] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
 
   async function submit(event?: FormEvent, preset?: string) {
     event?.preventDefault();
     const value = preset ?? question;
-    if (!value.trim()) return;
-    setQuestion(""); setBusy(true); setChatError(null);
+    if (!value.trim() || busy) return;
+    setQuestion(""); setPendingQuestion(value); setBusy(true); setChatError(null);
     try {
       const history = messages.slice(-6).map((message) => ({ question: message.question, answer: message.result.answer }));
       const result = await api.query(value, history);
       setMessages((current) => [...current, { id: Date.now(), question: value, result }]);
     } catch (caught) {
       setChatError(caught instanceof Error ? caught.message : "The question could not be answered.");
-    } finally { setBusy(false); }
+    } finally { setPendingQuestion(null); setBusy(false); }
   }
 
   function rowTitle(row: QueryResponse["rows"][number], index: number) {
@@ -192,9 +193,9 @@ function Copilot({ aiEnabled, dataset }: { aiEnabled: boolean; dataset: DatasetI
     <div className="conversation-card" aria-label="Analytics conversation">
       <div className="conversation-tools">
         <div className="suggestions">
-        {suggestions.map((item) => <button key={item} onClick={() => void submit(undefined, item)}>{item}</button>)}
+        {suggestions.map((item) => <button key={item} disabled={busy} onClick={() => void submit(undefined, item)}>{item}</button>)}
         </div>
-        {messages.length > 0 && <button className="clear-chat" onClick={() => setMessages([])}><RotateCcw size={14} /> New conversation</button>}
+        {messages.length > 0 && <button className="clear-chat" disabled={busy} onClick={() => setMessages([])}><RotateCcw size={14} /> New conversation</button>}
       </div>
       <div className="conversation-stream" aria-live="polite">
         {messages.length === 0 && !busy && <div className="empty-answer"><BarChart3 size={32} /><h2>Start a conversation with your data</h2><p>Ask about outcomes, distinctions, failed courses, learner profiles, risk, modules, or recommendations.</p></div>}
@@ -217,7 +218,13 @@ function Copilot({ aiEnabled, dataset }: { aiEnabled: boolean; dataset: DatasetI
             )}
           </div>
         </article>)}
-        {busy && <Loading />}
+        {pendingQuestion && <article className="chat-turn pending-turn">
+          <div className="user-message"><span>You</span><p>{pendingQuestion}</p></div>
+          <div className="assistant-message assistant-thinking">
+            <div className="answer-label"><Sparkles size={16} /> Northstar</div>
+            <div className="thinking-status" role="status"><span>Calculating a verified answer</span><i /><i /><i /></div>
+          </div>
+        </article>}
         {chatError && <div className="error-banner"><CircleAlert size={18} />{chatError}</div>}
       </div>
       <form className="query-box" onSubmit={submit}>
