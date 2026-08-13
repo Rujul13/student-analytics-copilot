@@ -677,3 +677,14 @@ The application does **not** need a more autonomous loop or a vector database ne
 **Next adapters.** Add adapter contracts for learning-management-system assessment exports and linked institutional course catalogs. Add persisted mapping templates after authentication and durable storage are introduced.
 
 The immediate goal is to make every answer correctly scoped, fully evidenced, and impossible to confuse with a broader cohort result—even when the generated program is syntactically valid.
+### ADR-032 - Align the product shell to the assignment's two-page layout
+
+**Status.** Accepted on 2026-08-12.
+
+**Decision.** The primary navigation contains exactly two destinations: **Dashboard** and **AI Copilot**. Dashboard owns metrics, filters, visualizations, provenance, priority signals, and a compact dataset-import panel below the analytics. AI Copilot owns two in-page modes: **Ask Your Data** and **Course Recommendations**. The Dashboard priority signal deep-links to Course Recommendations with the High academic-support-priority filter selected.
+
+**Why.** The assignment explicitly requests one dashboard page and one AI Copilot/chat page. Separate Overview, Ask Your Data, Course Planning, and Import Data navigation items made the application appear to be a four-page product and weakened literal rubric alignment.
+
+**Import interaction.** File mapping, validation, capability detection, preview tokens, and atomic activation remain unchanged. Only their presentation is simplified: before selection the Dashboard shows one compact file control; mapping and validation details appear progressively after analysis. The permanent three-step rail, empty canonical-file boxes, capability checklist, and starter-template footer are removed from the user journey.
+
+**How it helped.** All required features remain available while the information architecture now matches the evaluator's requested two-page scaffold. Natural-language analytics and recommendations read as two capabilities of one AI system, and dataset import stays contextual to the dashboard it changes.

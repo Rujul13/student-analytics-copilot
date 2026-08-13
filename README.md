@@ -12,6 +12,7 @@ The recommendation engine considers every eligible authentic OULAD module code. 
 
 ## Enhanced assignment coverage
 
+- The assignment-aligned two-page UI has a **Dashboard** for visualizations and compact dataset import, plus an **AI Copilot** with Ask Your Data and Course Recommendations tabs.
 - Dashboard filters and clickable drill-downs cover module, presentation, and outcome, with an outcome donut visualization.
 - The analytics copilot keeps bounded conversation history, asks GPT-OSS 120B to write Pandas against the four canonical dataframes, validates the program structurally and semantically, executes it in an isolated local process, and asks GPT-OSS 20B to phrase only the computed result.
 - Assignment-level questions for distinctions and learners failing multiple courses are supported, along with scoped learner profiles and recommendation questions.
@@ -53,7 +54,7 @@ Without the key—or when the live agent is unavailable—the dashboard, determi
 
 ## Importing another dataset
 
-Open **Import data** and select one to eight CSV files. The importer accepts a single flat academic-history file, partial related tables, the four canonical tables, or the five core official OULAD files. AI-assisted header analysis proposes a normalization plan; deterministic Pandas/DuckDB transformations construct the four canonical tables. The preview reports available capabilities and validates types, ranges, keys, and cross-table relationships before issuing a ten-minute activation token.
+On **Dashboard**, use the compact **Dataset import** panel below the visualizations and select one to eight CSV files. The importer accepts a single flat academic-history file, partial related tables, the four canonical tables, or the five core official OULAD files. AI-assisted header analysis proposes a normalization plan; deterministic Pandas/DuckDB transformations construct the four canonical tables. Progressive validation details appear only after a file is analyzed, before a ten-minute activation token is issued.
 
 The semantic adapter registry also recognizes the Kaggle/UCI **Predict Students' Dropout and Academic Success** schema. DuckDB profiles its delimiter, types, cardinalities, null rates, examples, and numeric ranges. Its dedicated adapter maps `Course` to a degree program rather than an individual class, converts the source 0-20 aggregate semester grade scale to percentages, ignores semesters with zero approved units when calculating recorded-grade averages, and attaches a capability manifest. The dashboard consequently switches to program performance, graduation, dropout, and outcome filters. Natural-language analytics receives the verified semantic grain, while Course Planning is hidden because that dataset contains no individual course histories or catalog. The same adapter works with Kaggle mirrors of the original [CC BY 4.0 UCI dataset, DOI 10.24432/C5MC89](https://archive.ics.uci.edu/dataset/697/predict+students+dropout+and+academic+success).
 

@@ -23,13 +23,12 @@ import {
 import { api } from "./api";
 import type { DashboardData, DashboardFilters, DatasetInfo, ImportMappingSuggestion, ImportPreview, QueryResponse, RecommendationResponse, Student } from "./types";
 
-type View = "overview" | "copilot" | "recommendations" | "import";
+type View = "dashboard" | "copilot";
+type CopilotMode = "analytics" | "recommendations";
 
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "copilot", label: "Ask your data", icon: Bot },
-  { id: "recommendations", label: "Course planning", icon: BookOpenCheck },
-  { id: "import", label: "Import data", icon: UploadCloud },
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "copilot", label: "AI Copilot", icon: Bot },
 ];
 
 function Loading() {
@@ -70,7 +69,7 @@ function DonutChart({ points, onSelect }: { points: DashboardData["outcomes"]; o
   </div>;
 }
 
-function Overview({ data, dataset, filters, onFilter, onNavigate, onOpenPriority }: { data: DashboardData; dataset: DatasetInfo | null; filters: DashboardFilters; onFilter: (filters: DashboardFilters) => void; onNavigate: (view: View) => void; onOpenPriority: () => void }) {
+function Overview({ data, dataset, filters, onFilter, onOpenAnalytics, onOpenPriority }: { data: DashboardData; dataset: DatasetInfo | null; filters: DashboardFilters; onFilter: (filters: DashboardFilters) => void; onOpenAnalytics: () => void; onOpenPriority: () => void }) {
   const icons = [Users, Gauge, TrendingUp, CircleAlert];
   const highRiskCount = data.risk_bands.find((point) => point.label === "High")?.count ?? 0;
   return (
@@ -81,7 +80,7 @@ function Overview({ data, dataset, filters, onFilter, onNavigate, onOpenPriority
           <h1>See the story behind every student outcome.</h1>
           <p className="lede">A grounded view of performance, completion, and risk—calculated from your active academic dataset.</p>
         </div>
-        <button className="hero-action" onClick={() => onNavigate("copilot")}>
+        <button className="hero-action" onClick={onOpenAnalytics}>
           <Sparkles size={18} />
           <span><small>Start with a question</small>What is driving withdrawals?</span>
           <ArrowRight size={20} />
@@ -270,8 +269,8 @@ function Recommendations({ initialRisk }: { initialRisk: Student["risk"] | "All"
     finally { setLearnersLoading(false); }
   }
 
-  return <section>
-    <div className="section-title"><div><p className="eyebrow">Course recommendation engine</p><h1>Explore the next best module.</h1></div><p>Historical outcomes and learner evidence first. AI ranking and explanation last.</p></div>
+  return <section className="recommendations-panel">
+    <div className="copilot-section-intro"><div><p className="eyebrow">Course recommendation engine</p><h2>Explore the next best module.</h2></div><p>Historical outcomes and learner evidence first. AI ranking and explanation last.</p></div>
     <div className="catalog-disclosure"><CircleAlert size={17} /><span><strong>OULAD evidence boundary:</strong> recommendations use authentic learner histories and module outcomes. OULAD does not contain future availability, prerequisites, degree requirements, or official module titles, so administrators must verify those before acting.</span></div>
     <div className="student-layout">
       <aside className="student-list panel">
@@ -415,8 +414,92 @@ function ImportData({ dataset, onActivated }: { dataset: DatasetInfo | null; onA
   </section>;
 }
 
+function CompactImport({ dataset, onActivated }: { dataset: DatasetInfo | null; onActivated: () => Promise<void> }) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [mapping, setMapping] = useState<ImportMappingSuggestion | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [activated, setActivated] = useState(false);
+
+  async function analyzeMapping() {
+    setBusy(true); setError(null); setPreview(null); setActivated(false);
+    try { setMapping(await api.suggestImportMapping(files)); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "The file headers could not be analyzed."); }
+    finally { setBusy(false); }
+  }
+
+  async function inspect() {
+    setBusy(true); setError(null); setPreview(null); setActivated(false);
+    try { setPreview(await api.previewImport(files, mapping ?? undefined)); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "The files could not be validated."); }
+    finally { setBusy(false); }
+  }
+
+  async function activate() {
+    if (!preview) return;
+    setBusy(true); setError(null);
+    try { await api.commitImport(preview.token); await onActivated(); setActivated(true); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "The dataset could not be activated."); }
+    finally { setBusy(false); }
+  }
+
+  async function reset() {
+    setBusy(true); setError(null);
+    try { await api.resetDataset(); await onActivated(); setFiles([]); setMapping(null); setPreview(null); setActivated(false); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "The dataset could not be reset."); }
+    finally { setBusy(false); }
+  }
+
+  return <section className="dataset-import panel" aria-label="Upload academic dataset">
+    <div className="dataset-import-heading">
+      <div><p className="eyebrow">Dataset import</p><h2>Use your own academic data</h2><p>Upload one flat CSV or a related CSV package. Northstar maps and validates it before activation.</p></div>
+      <div className="active-dataset"><Database size={17} /><span><small>Active dataset</small><strong>{dataset?.name ?? "Loading"}</strong></span>{dataset?.mode.startsWith("uploaded") && <button onClick={() => void reset()} disabled={busy}><RotateCcw size={14} /> Reset to OULAD</button>}</div>
+    </div>
+    <div className="compact-import-workspace">
+      <label className="compact-drop-zone">
+        <input type="file" accept=".csv,text/csv" multiple onChange={(event) => { setFiles(Array.from(event.target.files ?? []).slice(0, 8)); setMapping(null); setPreview(null); setActivated(false); setError(null); }} />
+        <UploadCloud size={23} />
+        <span><strong>{files.length ? `${files.length} file${files.length === 1 ? "" : "s"} selected` : "Choose CSV files"}</strong><small>{files.length ? files.map((file) => file.name).join(" · ") : "Single file or related package · up to 8 files"}</small></span>
+        <i>Browse</i>
+      </label>
+      {error && <div className="error-banner"><CircleAlert size={19} />{error}</div>}
+      {preview?.warnings.map((warning) => <div className="warning-banner" key={warning}><CircleAlert size={18} />{warning}</div>)}
+      {mapping && <div className="mapping-review compact-review">
+        <div className="mapping-head"><div><Sparkles size={17} /><span><strong>{mapping.ai_used ? "AI-assisted normalization plan" : "Deterministic normalization plan"}</strong><small>{mapping.note ?? "Review the detected mappings before applying them."}</small></span></div><i>{mapping.safe_to_apply ? "Ready" : "Needs attention"}</i></div>
+        {mapping.mappings.map((file) => <div className="mapping-file" key={file.filename}><div><strong>{file.filename}</strong><span>{file.role}</span></div><p>{file.columns.map((column) => `${column.source} → ${column.target}`).join(" · ") || (mapping.ingestion_mode === "semantic-adapter" ? `Dedicated ${mapping.adapter_id} transformation` : "No confident mappings")}</p>{file.missing.length > 0 && <small>Missing: {file.missing.join(", ")}</small>}</div>)}
+      </div>}
+      {preview && !activated && <div className="preview-table">
+        <div className="preview-head"><strong>Validation report</strong><span>{preview.mode}</span></div>
+        {preview.files.map((file) => <div key={file.filename}><span>{file.filename}</span><strong>{file.role}</strong><small>{file.rows.toLocaleString()} rows · {file.columns.length} columns</small></div>)}
+      </div>}
+      {activated && <div className="success-banner"><FileCheck2 size={19} />Dataset activated. Dashboard and AI Copilot now use version {preview?.dataset_version}.</div>}
+      <div className="compact-actions">
+        {!mapping && !preview && <button className="primary" disabled={busy || files.length === 0} onClick={() => void analyzeMapping()}>{busy ? "Analyzing…" : "Analyze dataset"}<Sparkles size={16} /></button>}
+        {mapping && !preview && <button className="primary" disabled={busy || !mapping.safe_to_apply} onClick={() => void inspect()}>{busy ? "Validating…" : "Validate mapping"}<ArrowRight size={16} /></button>}
+        {preview && !activated && <button className="primary" disabled={busy} onClick={() => void activate()}>{busy ? "Activating…" : "Activate dataset"}<ArrowRight size={16} /></button>}
+      </div>
+    </div>
+  </section>;
+}
+
+function AICopilot({ mode, onMode, aiEnabled, dataset, initialRisk }: { mode: CopilotMode; onMode: (mode: CopilotMode) => void; aiEnabled: boolean; dataset: DatasetInfo | null; initialRisk: Student["risk"] | "All" }) {
+  const recommendationsAvailable = dataset?.capabilities.historical_recommendations !== false;
+  useEffect(() => { if (!recommendationsAvailable && mode === "recommendations") onMode("analytics"); }, [recommendationsAvailable, mode, onMode]);
+  return <section className="ai-copilot-page">
+    <div className="copilot-page-heading"><div><p className="eyebrow">AI Copilot</p><h1>Ask, investigate, and plan.</h1><p>Query the active dataset or explore evidence-based course recommendations from one workspace.</p></div>
+      <div className="copilot-tabs" role="tablist" aria-label="AI Copilot tools">
+        <button role="tab" aria-selected={mode === "analytics"} className={mode === "analytics" ? "active" : ""} onClick={() => onMode("analytics")}><Bot size={17} /> Ask Your Data</button>
+        {recommendationsAvailable && <button role="tab" aria-selected={mode === "recommendations"} className={mode === "recommendations" ? "active" : ""} onClick={() => onMode("recommendations")}><BookOpenCheck size={17} /> Course Recommendations</button>}
+      </div>
+    </div>
+    {mode === "analytics" ? <Copilot aiEnabled={aiEnabled} dataset={dataset} /> : <Recommendations initialRisk={initialRisk} />}
+  </section>;
+}
+
 export default function App() {
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>("dashboard");
+  const [copilotMode, setCopilotMode] = useState<CopilotMode>("analytics");
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [dataset, setDataset] = useState<DatasetInfo | null>(null);
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -437,7 +520,7 @@ export default function App() {
     <aside className="sidebar">
       <div className="brand"><div><GraduationCap size={23} /></div><span>Northstar<small>Student intelligence</small></span></div>
       <nav aria-label="Primary navigation">
-        {navItems.filter((item) => item.id !== "recommendations" || dataset?.capabilities.historical_recommendations !== false).map(({ id, label, icon: Icon }) => <button aria-label={label} className={view === id ? "active" : ""} onClick={() => { if (id === "recommendations") setRecommendationRiskFilter("All"); setView(id); }} key={id}><Icon size={19} /><span>{label}</span></button>)}
+        {navItems.map(({ id, label, icon: Icon }) => <button aria-label={label} className={view === id ? "active" : ""} onClick={() => { if (id === "copilot") { setCopilotMode("analytics"); setRecommendationRiskFilter("All"); } setView(id); }} key={id}><Icon size={19} /><span>{label}</span></button>)}
       </nav>
       <div className="sidebar-foot"><Database size={18} /><span><strong>{dashboard?.dataset_name ?? "Connecting…"}</strong><small>{dashboard?.mode ?? "Loading dataset"}</small></span></div>
     </aside>
@@ -446,10 +529,8 @@ export default function App() {
       <div className="page-content">
         {error && <div className="error-banner"><CircleAlert size={20} />{error}</div>}
         {!error && !dashboard && <Loading />}
-        {dashboard && view === "overview" && <Overview data={dashboard} dataset={dataset} filters={dashboardFilters} onFilter={setDashboardFilters} onNavigate={setView} onOpenPriority={() => { setRecommendationRiskFilter("High"); setView("recommendations"); }} />}
-        {dashboard && view === "copilot" && <Copilot aiEnabled={aiEnabled} dataset={dataset} />}
-        {dashboard && view === "recommendations" && <Recommendations initialRisk={recommendationRiskFilter} />}
-        {dashboard && view === "import" && <ImportData dataset={dataset} onActivated={loadData} />}
+        {dashboard && view === "dashboard" && <><Overview data={dashboard} dataset={dataset} filters={dashboardFilters} onFilter={setDashboardFilters} onOpenAnalytics={() => { setCopilotMode("analytics"); setView("copilot"); }} onOpenPriority={() => { setRecommendationRiskFilter("High"); setCopilotMode("recommendations"); setView("copilot"); }} /><CompactImport dataset={dataset} onActivated={loadData} /></>}
+        {dashboard && view === "copilot" && <AICopilot mode={copilotMode} onMode={setCopilotMode} aiEnabled={aiEnabled} dataset={dataset} initialRisk={recommendationRiskFilter} />}
       </div>
     </main>
   </div>;
