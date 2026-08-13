@@ -26,6 +26,7 @@ class WorkerExecutionResult:
     status: Literal["ok", "error", "timeout"]
     result_type: str | None = None
     rows: list[dict[str, Any]] | None = None
+    total_count: int | None = None
     truncated: bool = False
     error: str | None = None
 
@@ -78,32 +79,35 @@ def _normalize_value(value: Any) -> Any:
     return str(value)
 
 
-def _normalize_result(result: Any) -> tuple[str, list[dict[str, Any]], bool]:
+def _normalize_result(result: Any) -> tuple[str, list[dict[str, Any]], bool, int | None]:
     if isinstance(result, pd.DataFrame):
         frame = result
+        total_count = len(frame)
         truncated = len(frame) > MAX_RESULT_ROWS
         if truncated:
             frame = frame.head(MAX_RESULT_ROWS)
         rows = [{str(k): _normalize_value(v) for k, v in row.items()} for row in frame.to_dict(orient="records")]
-        return "table", rows, truncated
+        return "table", rows, truncated, total_count
     if isinstance(result, pd.Series):
         series = result
+        total_count = len(series)
         truncated = len(series) > MAX_RESULT_ROWS
         if truncated:
             series = series.head(MAX_RESULT_ROWS)
         rows = [{"key": str(index), "value": _normalize_value(value)} for index, value in series.items()]
-        return "table", rows, truncated
+        return "table", rows, truncated, total_count
     if isinstance(result, dict):
-        return "table", [{"key": str(k), "value": _normalize_value(v)} for k, v in result.items()], False
+        return "table", [{"key": str(k), "value": _normalize_value(v)} for k, v in result.items()], False, len(result)
     if isinstance(result, (list, tuple)):
+        total_count = len(result)
         truncated = len(result) > MAX_RESULT_ROWS
         items = list(result)[:MAX_RESULT_ROWS]
         if items and isinstance(items[0], dict):
             rows = [{str(k): _normalize_value(v) for k, v in item.items()} for item in items]
         else:
             rows = [{"value": _normalize_value(item)} for item in items]
-        return "table", rows, truncated
-    return "scalar", [{"value": _normalize_value(result)}], False
+        return "table", rows, truncated, total_count
+    return "scalar", [{"value": _normalize_value(result)}], False, None
 
 
 def _shrink_to_budget(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
@@ -185,9 +189,14 @@ def _worker_entry(code: str, frames: dict[str, pd.DataFrame], result_queue: Any)
         if "result" not in namespace:
             result_queue.put(("error", "Generated code did not assign a value to `result`"))
             return
-        result_type, rows, truncated = _normalize_result(namespace["result"])
+        result_type, rows, truncated, total_count = _normalize_result(namespace["result"])
         rows, shrunk = _shrink_to_budget(rows)
-        result_queue.put(("ok", {"result_type": result_type, "rows": rows, "truncated": truncated or shrunk}))
+        result_queue.put(("ok", {
+            "result_type": result_type,
+            "rows": rows,
+            "total_count": total_count,
+            "truncated": truncated or shrunk,
+        }))
     except Exception as error:  # noqa: BLE001 - process boundary: must not leak internals or crash silently
         result_queue.put(("error", f"{type(error).__name__}: execution failed"))
 
@@ -239,5 +248,6 @@ def run_pandas_code(
         status="ok",
         result_type=payload["result_type"],
         rows=payload["rows"],
+        total_count=payload["total_count"],
         truncated=payload["truncated"],
     )

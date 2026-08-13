@@ -100,15 +100,23 @@ class AnalyticsWorkflow(Workflow):
         try:
             answer = await synthesize_answer(
                 self.client, self.answer_model, ev.question, ev.program.interpretation,
-                normalized_rows, self.dataset.name, self.dataset.version,
+                normalized_rows, ev.execution.total_count, ev.execution.truncated,
+                self.dataset.name, self.dataset.version,
             )
         except Exception:
-            answer = deterministic_answer_from_rows(normalized_rows, ev.execution.result_type or ev.program.result_type)
+            answer = deterministic_answer_from_rows(
+                normalized_rows,
+                ev.execution.result_type or ev.program.result_type,
+                ev.execution.total_count,
+                ev.execution.truncated,
+            )
         return StopEvent(
             result=QueryResponse(
                 answer=answer,
                 result_type="metric" if ev.execution.result_type == "scalar" else "table",
                 rows=normalized_rows,
+                total_count=ev.execution.total_count,
+                rows_truncated=ev.execution.truncated,
                 execution_mode="generated-pandas-repaired" if ev.used_repair else "generated-pandas",
                 ai_used=True,
             )

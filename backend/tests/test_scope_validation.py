@@ -57,6 +57,38 @@ def test_detects_requested_count(context):
     assert scope.course_codes == ["CCC"]
 
 
+@pytest.mark.parametrize(
+    ("question", "comparison", "threshold"),
+    [
+        ("Which students failed more than one class?", "more_than", 1),
+        ("How many students have failed in at least 2 modules?", "at_least", 2),
+        ("How many students have failed in 2 courses?", "exactly", 2),
+    ],
+)
+def test_course_failure_threshold_is_not_mistaken_for_a_result_limit(context, question, comparison, threshold):
+    scope = extract_scope(question, context)
+    assert scope.requested_count is None
+    assert scope.failed_course_comparison == comparison
+    assert scope.failed_course_threshold == threshold
+
+
+def test_failed_course_question_requires_distinct_modules_per_learner(context):
+    scope = extract_scope("How many students have failed in at least 2 modules?", context)
+    wrong = (
+        "failed = enrollments[enrollments['final_result'] == 'Fail']\n"
+        "counts = failed.groupby('student_id').size()\n"
+        "result = int((counts >= 2).sum())"
+    )
+    assert "distinct failed" in verify_scope_preserved(scope, wrong, ["student_id", "final_result"]).lower()
+
+    correct = (
+        "failed = enrollments[enrollments['final_result'] == 'Fail']\n"
+        "counts = failed.groupby('student_id')['course_code'].nunique()\n"
+        "result = int((counts >= 2).sum())"
+    )
+    assert verify_scope_preserved(scope, correct, ["student_id", "course_code", "final_result"]) is None
+
+
 def test_detects_group_by_module(context):
     scope = extract_scope("Break down the completion rate by module.", context)
     assert scope.group_by_module is True

@@ -140,3 +140,11 @@ def test_deterministic_answer_from_rows_handles_scalar():
 def test_deterministic_answer_from_rows_handles_empty():
     answer = deterministic_answer_from_rows([], "table")
     assert "empty" in answer.lower()
+
+
+def test_deterministic_answer_distinguishes_total_matches_from_evidence_preview():
+    answer = deterministic_answer_from_rows(
+        [{"student_id": "S1", "failed_courses": 2}], "table", total_count=190, rows_truncated=True
+    )
+    assert "190 total matches" in answer
+    assert "1 evidence rows shown" in answer

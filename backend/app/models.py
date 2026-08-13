@@ -129,6 +129,8 @@ class QueryResponse(BaseModel):
     answer: str
     result_type: Literal["metric", "table", "unsupported", "error"]
     rows: list[dict[str, JSONScalar]] = Field(default_factory=list)
+    total_count: int | None = Field(default=None, ge=0)
+    rows_truncated: bool = False
     execution_mode: Literal[
         "generated-pandas",
         "generated-pandas-repaired",

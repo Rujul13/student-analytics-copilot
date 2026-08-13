@@ -688,3 +688,15 @@ The immediate goal is to make every answer correctly scoped, fully evidenced, an
 **Import interaction.** File mapping, validation, capability detection, preview tokens, and atomic activation remain unchanged. Only their presentation is simplified: before selection the Dashboard shows one compact file control; mapping and validation details appear progressively after analysis. The permanent three-step rail, empty canonical-file boxes, capability checklist, and starter-template footer are removed from the user journey.
 
 **How it helped.** All required features remain available while the information architecture now matches the evaluator's requested two-page scaffold. Natural-language analytics and recommendations read as two capabilities of one AI system, and dataset import stays contextual to the dashboard it changes.
+
+### ADR-033 - Separate matching totals from bounded evidence previews
+
+**Status.** Accepted on 2026-08-13.
+
+**Decision.** Generated Pandas returns the complete calculated table to the isolated worker. The worker records its authoritative pre-truncation row count, then bounds the browser evidence preview to 100 rows. `QueryResponse.total_count` and `rows_truncated` are carried independently from `rows`, and the answer model is explicitly prohibited from treating preview length as population size.
+
+**Why.** A question that matched 190 learners was previously truncated to 100 evidence rows before answer synthesis. The formatter consequently claimed there were 100 learners and that all rows were shown. The calculation itself was broader than the displayed preview, but the API contract did not preserve that distinction.
+
+**Threshold semantics.** Scope validation now represents failed-course thresholds separately from requested output limits. “More than one,” “at least two,” and “exactly two” are verified as `> 1`, `>= 2`, and `== 2`, respectively. Failed courses are counted as distinct `course_code` values per learner, not repeated enrollment attempts. On full OULAD, all three example phrasings resolve to 190 learners; the former 232 result counted attempts rather than distinct modules.
+
+**Fallback behavior.** The deterministic fallback supports the same threshold semantics, reports total and preview counts separately, and no longer treats every unknown “how many students” question as a request for total cohort size. Dataset-specific dropout, graduation, semester-grade, and degree-program calculations remain available when the live provider is rate-limited.

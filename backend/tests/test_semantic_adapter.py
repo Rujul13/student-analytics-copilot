@@ -89,6 +89,12 @@ def test_semantic_contract_is_available_to_the_pandas_agent(monkeypatch):
         fallback = answer_question(context, "How many students dropped out?", ai_enabled=False)
         assert fallback.answer == "1 learner dropped out."
         assert fallback.rows[0]["value"] == 1
+        semester_average = answer_question(context, "What is the average second semester grade?", ai_enabled=False)
+        assert semester_average.result_type == "metric"
+        assert semester_average.rows[0]["value"] == 70.0
+        program_average = answer_question(context, "What is the average grade by degree program?", ai_enabled=False)
+        assert program_average.result_type == "table"
+        assert program_average.total_count == 2
 
 
 def test_semicolon_delimited_source_and_ungraded_semesters_are_handled(monkeypatch):

@@ -54,6 +54,8 @@ class ScopeFilters:
     outcomes: list[str] = field(default_factory=list)
     sort_direction: str | None = None
     requested_count: int | None = None
+    failed_course_threshold: int | None = None
+    failed_course_comparison: str | None = None
     group_by_module: bool = False
     wants_rate: bool = False
     wants_distinct_learners: bool = False
@@ -98,10 +100,32 @@ def extract_scope(question: str, context: DatasetContext) -> ScopeFilters:
 
     if any(re.search(rf"\b{term}\b", normalized) for term in _HIGHEST_TERMS):
         scope.sort_direction = "highest"
-    elif any(re.search(rf"\b{term}\b", normalized) for term in _LOWEST_TERMS):
+    elif any(re.search(rf"\b{term}\b", normalized) for term in _LOWEST_TERMS) and not re.search(r"\bat least\b", normalized):
         scope.sort_direction = "lowest"
 
-    has_count_context = any(term in normalized for term in _COUNT_CONTEXT_TERMS)
+    failed_course_phrase = bool(
+        re.search(r"\b(?:fail|failed|failing)\b.*\b(?:courses?|modules?|class(?:es)?)\b", normalized)
+        or re.search(r"\b(?:courses?|modules?|class(?:es)?)\b.*\b(?:fail|failed|failing)\b", normalized)
+    )
+    if failed_course_phrase:
+        number_match = re.search(r"\b(\d{1,2})\b", normalized)
+        threshold = int(number_match.group(1)) if number_match else None
+        if threshold is None:
+            for word, number in _WORD_TO_NUMBER.items():
+                if re.search(rf"\b{word}\b", normalized):
+                    threshold = number
+                    break
+        if re.search(r"\bmore than\b", normalized) and threshold is not None:
+            scope.failed_course_threshold = threshold
+            scope.failed_course_comparison = "more_than"
+        elif re.search(r"\b(?:at least|minimum(?: of)?)\b", normalized) and threshold is not None:
+            scope.failed_course_threshold = threshold
+            scope.failed_course_comparison = "at_least"
+        elif threshold is not None:
+            scope.failed_course_threshold = threshold
+            scope.failed_course_comparison = "exactly"
+
+    has_count_context = any(term in normalized for term in _COUNT_CONTEXT_TERMS) and not failed_course_phrase
     if has_count_context:
         digit_match = re.search(r"\b(\d{1,2})\b", normalized)
         if digit_match:
@@ -155,6 +179,18 @@ def verify_scope_preserved(scope: ScopeFilters, code: str, referenced_columns: l
             return f"The generated code did not apply the requested outcome filter '{outcome}'."
     if scope.requested_count is not None and str(scope.requested_count) not in code:
         return f"The generated code did not apply the requested result count of {scope.requested_count}."
+    if scope.failed_course_threshold is not None:
+        compact = re.sub(r"\s+", "", code)
+        if "course_code" not in code or not any(marker in code for marker in ("nunique(", "drop_duplicates(")):
+            return "The generated code did not count distinct failed course_code values per learner."
+        threshold = scope.failed_course_threshold
+        expected = {
+            "more_than": (f">{threshold}",),
+            "at_least": (f">={threshold}",),
+            "exactly": (f"=={threshold}", f".eq({threshold})"),
+        }[scope.failed_course_comparison or "exactly"]
+        if not any(marker in compact for marker in expected):
+            return f"The generated code did not apply the requested failed-course threshold ({scope.failed_course_comparison} {threshold})."
     if scope.group_by_module and "course_code" not in code and "course_code" not in referenced_columns:
         return "The generated code did not group results by module as requested."
     if scope.sort_direction == "highest":

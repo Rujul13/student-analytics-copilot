@@ -186,6 +186,8 @@ export interface QueryResponse {
   answer: string;
   result_type: "metric" | "table" | "unsupported" | "error";
   rows: Record<string, string | number | boolean | null>[];
+  total_count?: number | null;
+  rows_truncated?: boolean;
   execution_mode: "generated-pandas" | "generated-pandas-repaired" | "deterministic-fallback" | "unsupported";
   ai_used: boolean;
 }

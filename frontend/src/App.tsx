@@ -204,7 +204,9 @@ function Copilot({ aiEnabled, dataset }: { aiEnabled: boolean; dataset: DatasetI
             <div className="answer-label"><Sparkles size={16} /> Northstar</div>
             <h2>{message.result.answer}</h2>
             {message.result.rows.length > 0 && <div className="evidence-table">
-              <div className="evidence-heading"><strong>Verified evidence</strong><span>{message.result.rows.length} result{message.result.rows.length === 1 ? "" : "s"}</span></div>
+              <div className="evidence-heading"><strong>Verified evidence</strong><span>{message.result.rows_truncated && message.result.total_count != null
+                ? `${message.result.rows.length} of ${message.result.total_count} results`
+                : `${message.result.total_count ?? message.result.rows.length} result${(message.result.total_count ?? message.result.rows.length) === 1 ? "" : "s"}`}</span></div>
               {message.result.rows.map((row, index) => <div className="evidence-row" key={`${message.id}-${index}`}>
                 <strong>{rowTitle(row, index)}</strong>
                 <div>{rowEvidence(row).map(([key, value]) => <span key={key}><small>{key.replaceAll("_", " ")}</small>{String(value)}</span>)}</div>

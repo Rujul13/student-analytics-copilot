@@ -48,6 +48,7 @@ def test_truncates_results_over_the_row_limit():
     assert outcome.status == "ok"
     assert len(outcome.rows) == 100
     assert outcome.truncated is True
+    assert outcome.total_count == 250
 
 
 def test_missing_result_variable_is_a_sanitized_error():

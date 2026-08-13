@@ -114,10 +114,12 @@ async def generate_pandas_program(
         "Prefer a DataFrame result with evidence columns for ranking, comparison, or 'which module/learner' questions. "
         "A rate question must compute a numerator and denominator, not only a count. "
         "When asked how many students or learners meet a condition, count distinct student_id values, never enrollment rows. "
+        "When a question asks how many courses, modules, or classes a learner failed, count distinct course_code values per student_id, "
+        "not enrollment attempts or presentations, and apply 'at least', 'more than', or 'exactly' literally. "
         "A learner may be named by the numeric suffix of an OULAD ID; use the full canonical student_id supplied by scope validation. "
         "For academic-support risk, use the exact risk definition in schema.metric_definitions and return a column named `risk`. "
         "Preserve every exact course code, presentation, or learner identifier mentioned in the question. "
-        "Limit any table result to at most 100 rows using `.head(100)` when appropriate."
+        "Do not truncate a table unless the user explicitly asks for a fixed number of results; the application creates a bounded evidence preview after execution."
         " Obey schema.semantic_contract exactly; never reinterpret a degree-program field as an individual course."
     )
     user_payload: dict[str, Any] = {
@@ -153,6 +155,8 @@ async def synthesize_answer(
     question: str,
     interpretation: str,
     normalized_rows: list[dict[str, Any]],
+    total_count: int | None,
+    rows_truncated: bool,
     dataset_name: str,
     dataset_version: str,
 ) -> str:
@@ -160,7 +164,9 @@ async def synthesize_answer(
         "question": question,
         "interpretation": interpretation,
         "computed_result": normalized_rows[:20],
-        "returned_row_count": len(normalized_rows),
+        "evidence_preview_count": len(normalized_rows),
+        "total_matching_count": total_count,
+        "evidence_is_truncated": rows_truncated,
         "dataset_name": dataset_name,
         "dataset_version": dataset_version,
     }
@@ -175,8 +181,9 @@ async def synthesize_answer(
                     "Write one concise, natural-language answer using only the supplied computed_result. "
                     "Do not invent numbers, causes, or explanations that are not in the payload. "
                     "State the key figure or finding directly, including the relevant module, learner, metric, and unit. "
-                    "Do not answer with only a bare identifier or number. If returned_row_count exceeds 10, state the total, "
-                    "mention at most three examples, and tell the user the evidence table contains the returned rows."
+                    "Do not answer with only a bare identifier or number. For a table, total_matching_count is the authoritative total; "
+                    "never treat evidence_preview_count as the total when evidence_is_truncated is true. Mention at most three examples. "
+                    "If evidence is truncated, say the table shows a preview of the total rather than claiming it contains every row."
                 ),
             },
             {"role": "user", "content": json.dumps(payload)},
@@ -191,14 +198,19 @@ async def synthesize_answer(
     return narrative.answer
 
 
-def deterministic_answer_from_rows(rows: list[dict[str, Any]], result_type: str) -> str:
+def deterministic_answer_from_rows(
+    rows: list[dict[str, Any]], result_type: str, total_count: int | None = None, rows_truncated: bool = False
+) -> str:
     if not rows:
         return "The computed result was empty for the active dataset."
     if result_type == "scalar":
         return f"The computed result is {rows[0].get('value')}."
     preview = rows[0]
     parts = ", ".join(f"{key}: {value}" for key, value in preview.items())
-    suffix = f" ({len(rows)} rows returned)" if len(rows) > 1 else ""
+    if rows_truncated and total_count is not None:
+        suffix = f" ({total_count} total matches; {len(rows)} evidence rows shown)"
+    else:
+        suffix = f" ({total_count or len(rows)} rows returned)" if (total_count or len(rows)) > 1 else ""
     return f"{parts}{suffix}"
 
 

@@ -5,6 +5,7 @@ import re
 from .analytics import dashboard, students
 from .models import QueryResponse
 from .repository import DatasetContext
+from .scope_validation import extract_scope
 
 
 def data_availability_answer(question: str) -> str:
@@ -48,6 +49,49 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
                 answer=f"{count:,} {learner_word} {label}.",
                 result_type="metric",
                 rows=[{"metric": f"Learners who {label}", "value": count}],
+                execution_mode="deterministic-fallback",
+                ai_used=False,
+            )
+    if not context.semantic.capabilities.individual_course_history and "average" in normalized:
+        semester_columns = {
+            "first semester grade": "semester_1_grade",
+            "1st semester grade": "semester_1_grade",
+            "semester 1 grade": "semester_1_grade",
+            "second semester grade": "semester_2_grade",
+            "2nd semester grade": "semester_2_grade",
+            "semester 2 grade": "semester_2_grade",
+        }
+        for phrase, column in semester_columns.items():
+            if phrase in normalized and column in context.frames["enrollments"].columns:
+                value = float(context.frames["enrollments"][column].dropna().mean())
+                label = "First semester average grade" if column == "semester_1_grade" else "Second semester average grade"
+                return QueryResponse(
+                    answer=f"{label} is {value:.1f}%.",
+                    result_type="metric",
+                    rows=[{"metric": label, "value": round(value, 1)}],
+                    execution_mode="deterministic-fallback",
+                    ai_used=False,
+                )
+        if any(phrase in normalized for phrase in ("by degree program", "per degree program", "each degree program")):
+            enrollments = context.frames["enrollments"]
+            grades = context.frames["grades"]
+            courses = context.frames["courses"][["course_code", "course_name"]]
+            grouped = (
+                enrollments.merge(grades, on="enrollment_id", how="left")
+                .groupby("course_code", as_index=False)["weighted_grade"]
+                .mean()
+                .merge(courses, on="course_code", how="left")
+                .sort_values("course_name")
+            )
+            rows = [
+                {"degree_program": row.course_name, "average_grade": round(float(row.weighted_grade), 1)}
+                for row in grouped.itertuples()
+            ]
+            return QueryResponse(
+                answer=f"Average grades were calculated for {len(rows)} degree programs.",
+                result_type="table",
+                rows=rows,
+                total_count=len(rows),
                 execution_mode="deterministic-fallback",
                 ai_used=False,
             )
@@ -105,14 +149,22 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
             execution_mode="deterministic-fallback",
             ai_used=False,
         )
-    if "fail" in normalized and any(phrase in normalized for phrase in ["more than one", "multiple", "at least two"]):
+    failure_scope = extract_scope(question, context)
+    if "fail" in normalized and failure_scope.failed_course_threshold is not None:
         failed = context.frames["enrollments"]
         failed = failed[failed["final_result"].eq("Fail")]
         grouped = failed.groupby("student_id")["course_code"].agg(lambda values: sorted(set(map(str, values))))
         learner_map = {item.student_id: item for item in students(context)}
         rows = []
         for student_id, course_codes in grouped.items():
-            if len(course_codes) < 2 or student_id not in learner_map:
+            threshold = failure_scope.failed_course_threshold
+            comparison = failure_scope.failed_course_comparison
+            matches = (
+                len(course_codes) > threshold if comparison == "more_than"
+                else len(course_codes) >= threshold if comparison == "at_least"
+                else len(course_codes) == threshold
+            )
+            if not matches or student_id not in learner_map:
                 continue
             learner = learner_map[student_id]
             rows.append({
@@ -124,10 +176,28 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
                 "risk": learner.risk,
             })
         rows.sort(key=lambda row: (-int(row["failed_course_count"]), float(row["average_grade"])))
+        comparison_text = {
+            "more_than": f"more than {threshold}",
+            "at_least": f"at least {threshold}",
+            "exactly": f"exactly {threshold}",
+        }[comparison or "exactly"]
+        asks_for_list = bool(re.search(r"\b(?:which|who|list|show|give me)\b", normalized))
+        if not asks_for_list:
+            return QueryResponse(
+                answer=f"{len(rows):,} learners failed {comparison_text} distinct course modules.",
+                result_type="metric",
+                rows=[{"metric": f"Learners who failed {comparison_text} distinct modules", "value": len(rows)}],
+                total_count=len(rows),
+                execution_mode="deterministic-fallback",
+                ai_used=False,
+            )
+        preview = rows[:20]
         return QueryResponse(
-            answer=f"I found {len(rows)} learners who failed more than one course.",
+            answer=f"I found {len(rows):,} learners who failed {comparison_text} distinct course modules.",
             result_type="table",
-            rows=rows[:20],
+            rows=preview,
+            total_count=len(rows),
+            rows_truncated=len(preview) < len(rows),
             execution_mode="deterministic-fallback",
             ai_used=False,
         )
@@ -136,8 +206,9 @@ def answer_question(context: DatasetContext, question: str, ai_enabled: bool) ->
         "average student score": summary.metrics[1],
         "average score": summary.metrics[1],
         "completion rate": summary.metrics[2],
-        "how many students": summary.metrics[0],
         "student count": summary.metrics[0],
+        "total students": summary.metrics[0],
+        "total learners": summary.metrics[0],
         "high-risk": summary.metrics[3],
         "high risk": summary.metrics[3],
     }

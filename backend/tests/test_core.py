@@ -173,7 +173,37 @@ def test_assignment_failure_question_is_answerable_without_generated_code():
     result = answer_question(context(), "Give me a list of students who are failing more than one class.", False)
     assert result.result_type == "table"
     assert all(int(row["failed_course_count"]) >= 2 for row in result.rows)
+    assert result.total_count is not None
+    assert result.total_count >= len(result.rows)
     assert result.execution_mode == "deterministic-fallback"
+
+
+def test_failure_count_synonyms_use_distinct_modules_not_enrollment_attempts():
+    dataset = context()
+    expected = int((
+        dataset.frames["enrollments"]
+        .loc[dataset.frames["enrollments"]["final_result"].eq("Fail")]
+        .groupby("student_id")["course_code"]
+        .nunique()
+        .ge(2)
+        .sum()
+    ))
+    questions = [
+        "How many students failed more than one class?",
+        "How many students have failed in at least 2 modules?",
+        "How many students have failed in exactly 2 courses?",
+    ]
+    for question in questions:
+        response = answer_question(dataset, question, False)
+        assert response.result_type == "metric"
+        assert response.rows[0]["value"] == expected
+        assert response.total_count == expected
+
+
+def test_unknown_how_many_question_does_not_fall_back_to_total_students():
+    response = answer_question(context(), "How many students own a bicycle?", False)
+    assert response.result_type == "unsupported"
+    assert response.rows == []
 
 
 def test_distinction_count_and_scoped_learner_fallback():
